@@ -28,6 +28,7 @@ version = { workspace = true }
 futures = { workspace = true }
 iceberg = { workspace = true }
 iceberg-catalog-rest = { workspace = true }
+iceberg-catalog-memory = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [[example]]
@@ -43,6 +44,12 @@ name = "oss-backend"
 path = "src/oss_backend.rs"
 required-features = ["storage-oss"]
 
+[[example]]
+name = "azdls-backend"
+path = "src/azdls_backend.rs"
+required-features = ["storage-azdls"]
+
 [features]
 default = []
 storage-oss = ["iceberg/storage-oss"]
+storage-azdls = ["iceberg/storage-azdls"]
