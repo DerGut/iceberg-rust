@@ -19,4 +19,7 @@
 pub const ICEBERG_CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 mod catalog;
+pub mod exec;
+pub mod namespaces;
+
 pub use catalog::*;

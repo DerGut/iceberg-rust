@@ -33,6 +33,8 @@ datafusion = { workspace = true }
 datafusion-cli = { workspace = true }
 dirs = { workspace = true }
 fs-err = { workspace = true }
+futures = { workspace = true }
+iceberg = { workspace = true }
 iceberg-catalog-rest = { workspace = true }
 iceberg-datafusion = { workspace = true }
 mimalloc = { workspace = true }

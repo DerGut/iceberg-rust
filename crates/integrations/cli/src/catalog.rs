@@ -23,6 +23,8 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use datafusion::catalog::{CatalogProvider, CatalogProviderList};
 use fs_err::read_to_string;
+use futures::future::try_join_all;
+use iceberg::Catalog;
 use iceberg_catalog_rest::{RestCatalog, RestCatalogConfig};
 use iceberg_datafusion::IcebergCatalogProvider;
 use toml::{Table as TomlTable, Value};
@@ -31,16 +33,35 @@ const CONFIG_NAME_CATALOGS: &str = "catalogs";
 
 #[derive(Debug)]
 pub struct IcebergCatalogList {
-    catalogs: HashMap<String, Arc<IcebergCatalogProvider>>,
+    catalogs: HashMap<String, Arc<dyn Catalog>>,
 }
 
 impl IcebergCatalogList {
-    pub async fn parse(path: &Path) -> anyhow::Result<Self> {
-        let toml_table: TomlTable = toml::from_str(&read_to_string(path)?)?;
-        Self::parse_table(&toml_table).await
+    pub fn catalog(&self, name: &str) -> Option<Arc<dyn Catalog>> {
+        self.catalogs.get(name).map(|catalog| Arc::clone(catalog))
     }
 
-    pub async fn parse_table(configs: &TomlTable) -> anyhow::Result<Self> {
+    pub async fn try_to_provider_list(&self) -> anyhow::Result<Arc<dyn CatalogProviderList>> {
+        let provider_futures = self.catalogs.iter().map(|(name, catalog)| async move {
+            let provider = IcebergCatalogProvider::try_new(Arc::clone(&catalog)).await?;
+            Ok::<(String, Arc<dyn CatalogProvider>), anyhow::Error>((
+                name.clone(),
+                Arc::new(provider) as Arc<dyn CatalogProvider>,
+            ))
+        });
+        let providers = try_join_all(provider_futures).await?;
+
+        Ok(Arc::new(IcebergCatalogProviderList {
+            providers: HashMap::from_iter(providers),
+        }) as Arc<dyn CatalogProviderList>)
+    }
+
+    pub async fn parse(path: &Path) -> anyhow::Result<Self> {
+        let toml_table: TomlTable = toml::from_str(&read_to_string(path)?)?;
+        Self::try_from_toml(&toml_table).await
+    }
+
+    async fn try_from_toml(configs: &TomlTable) -> anyhow::Result<Self> {
         if let Value::Array(catalogs_config) =
             configs.get(CONFIG_NAME_CATALOGS).ok_or_else(|| {
                 anyhow::Error::msg(format!("{CONFIG_NAME_CATALOGS} entry not found in config"))
@@ -49,9 +70,8 @@ impl IcebergCatalogList {
             let mut catalogs = HashMap::with_capacity(catalogs_config.len());
             for config in catalogs_config {
                 if let Value::Table(table_config) = config {
-                    let (name, catalog_provider) =
-                        IcebergCatalogList::parse_one(table_config).await?;
-                    catalogs.insert(name, catalog_provider);
+                    let (name, catalog) = Self::parse_catalog(table_config)?;
+                    catalogs.insert(name, catalog);
                 } else {
                     return Err(anyhow!("{CONFIG_NAME_CATALOGS} entry must be a table"));
                 }
@@ -62,9 +82,7 @@ impl IcebergCatalogList {
         }
     }
 
-    async fn parse_one(
-        config: &TomlTable,
-    ) -> anyhow::Result<(String, Arc<IcebergCatalogProvider>)> {
+    fn parse_catalog(config: &TomlTable) -> anyhow::Result<(String, Arc<dyn Catalog>)> {
         let name = config
             .get("name")
             .ok_or_else(|| anyhow::anyhow!("name not found for catalog"))?
@@ -91,7 +109,8 @@ impl IcebergCatalogList {
             .get("uri")
             .ok_or_else(|| anyhow::anyhow!("uri not found for catalog {name}"))?
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("uri is not string"))?;
+            .ok_or_else(|| anyhow::anyhow!("uri is not string"))?
+            .trim_end_matches('/');
 
         let warehouse = catalog_config
             .get("warehouse")
@@ -119,17 +138,18 @@ impl IcebergCatalogList {
             .props(props)
             .build();
 
-        Ok((
-            name.to_string(),
-            Arc::new(
-                IcebergCatalogProvider::try_new(Arc::new(RestCatalog::new(rest_catalog_config)))
-                    .await?,
-            ),
-        ))
+        let catalog = RestCatalog::new(rest_catalog_config);
+
+        Ok((name.to_string(), Arc::new(catalog) as Arc<dyn Catalog>))
     }
 }
 
-impl CatalogProviderList for IcebergCatalogList {
+#[derive(Debug)]
+struct IcebergCatalogProviderList {
+    providers: HashMap<String, Arc<dyn CatalogProvider>>,
+}
+
+impl CatalogProviderList for IcebergCatalogProviderList {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -137,19 +157,19 @@ impl CatalogProviderList for IcebergCatalogList {
     fn register_catalog(
         &self,
         _name: String,
-        _catalog: Arc<dyn CatalogProvider>,
-    ) -> Option<Arc<dyn CatalogProvider>> {
+        _catalog: Arc<dyn datafusion::catalog::CatalogProvider>,
+    ) -> Option<Arc<dyn datafusion::catalog::CatalogProvider>> {
         tracing::error!("Registering catalog is not supported yet");
         None
     }
 
     fn catalog_names(&self) -> Vec<String> {
-        self.catalogs.keys().cloned().collect()
+        self.providers.keys().cloned().collect()
     }
 
     fn catalog(&self, name: &str) -> Option<Arc<dyn CatalogProvider>> {
-        self.catalogs
+        self.providers
             .get(name)
-            .map(|c| c.clone() as Arc<dyn CatalogProvider>)
+            .map(|provider| Arc::clone(provider))
     }
 }

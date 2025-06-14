@@ -18,16 +18,14 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::str::FromStr;
-use std::sync::Arc;
 
-use clap::Parser;
-use datafusion::execution::runtime_env::RuntimeEnvBuilder;
-use datafusion::prelude::{SessionConfig, SessionContext};
-use datafusion_cli::exec;
+use clap::{Parser, Subcommand};
 use datafusion_cli::print_format::PrintFormat;
-use datafusion_cli::print_options::{MaxRows, PrintOptions};
-use iceberg_cli::{ICEBERG_CLI_VERSION, IcebergCatalogList};
+use datafusion_cli::print_options::MaxRows;
+use iceberg_cli::{ICEBERG_CLI_VERSION, IcebergCatalogList, exec, namespaces};
 
+// TODO: these should maybe be defined is a separate module so that different
+// command execution modules can import them.
 #[derive(Debug, Parser, PartialEq)]
 #[clap(author, version, about, long_about= None)]
 struct Args {
@@ -37,6 +35,9 @@ struct Args {
         help = "Parse catalog config instead of using ~/.icebergrc"
     )]
     rc: Option<String>,
+
+    #[clap(short = 'c', long = "catalog", help = "Use a specific catalog")]
+    catalog: Option<String>,
 
     #[clap(long, value_enum, default_value_t = PrintFormat::Automatic)]
     format: PrintFormat,
@@ -57,6 +58,19 @@ struct Args {
 
     #[clap(long, help = "Enables console syntax highlighting")]
     color: bool,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand, Debug, PartialEq)]
+enum Command {
+    // Interact with namespaces
+    Namespaces {
+        #[command(subcommand)]
+        subcommand: Option<namespaces::Command>,
+    },
+    Exec,
 }
 
 #[tokio::main]
@@ -79,23 +93,6 @@ async fn main_inner() -> anyhow::Result<()> {
         println!("ICEBERG CLI v{}", ICEBERG_CLI_VERSION);
     }
 
-    let session_config = SessionConfig::from_env()?.with_information_schema(true);
-
-    let rt_builder = RuntimeEnvBuilder::new();
-
-    let runtime_env = rt_builder.build_arc()?;
-
-    // enable dynamic file query
-    let ctx = SessionContext::new_with_config_rt(session_config, runtime_env).enable_url_table();
-    ctx.refresh_catalogs().await?;
-
-    let mut print_options = PrintOptions {
-        format: args.format,
-        quiet: args.quiet,
-        maxrows: args.maxrows,
-        color: args.color,
-    };
-
     let rc = match args.rc {
         Some(file) => PathBuf::from_str(&file)?,
         None => dirs::home_dir()
@@ -103,8 +100,27 @@ async fn main_inner() -> anyhow::Result<()> {
             .ok_or_else(|| anyhow::anyhow!("cannot find home directory"))?,
     };
 
-    let catalogs = Arc::new(IcebergCatalogList::parse(&rc).await?);
-    ctx.register_catalog_list(catalogs);
+    let catalogs = IcebergCatalogList::parse(&rc).await?;
 
-    Ok(exec::exec_from_repl(&ctx, &mut print_options).await?)
+    let selected_catalog = args
+        .catalog
+        .map(|name| {
+            catalogs
+                .catalog(&name)
+                .ok_or(anyhow::anyhow!("catalog {} not found", name))
+        })
+        .transpose()?;
+
+    match &args.command {
+        Some(Command::Namespaces { subcommand }) => {
+            if let Some(catalog) = selected_catalog {
+                namespaces::exec(catalog, subcommand).await
+            } else {
+                Err(anyhow::anyhow!("no catalog selected"))
+            }
+        }
+        Some(Command::Exec) | None => {
+            exec::exec(&catalogs, args.format, args.quiet, args.maxrows, args.color).await
+        }
+    }
 }
