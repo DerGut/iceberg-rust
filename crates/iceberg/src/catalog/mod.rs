@@ -37,6 +37,8 @@ use crate::spec::{
 use crate::table::Table;
 use crate::{Error, ErrorKind, Result};
 
+mod metastore;
+
 /// The catalog API for Iceberg Rust.
 #[async_trait]
 pub trait Catalog: Debug + Sync + Send {

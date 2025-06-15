@@ -18,6 +18,7 @@
 use std::backtrace::{Backtrace, BacktraceStatus};
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
+use std::num::ParseIntError;
 
 use chrono::{DateTime, TimeZone as _, Utc};
 
@@ -339,6 +340,12 @@ define_from_err!(
     std::num::TryFromIntError,
     ErrorKind::DataInvalid,
     "failed to convert integer"
+);
+
+define_from_err!(
+    std::num::ParseIntError,
+    ErrorKind::DataInvalid,
+    "Failed to parse string to integer"
 );
 
 define_from_err!(
