@@ -25,10 +25,20 @@ rust-version = { workspace = true }
 version = { workspace = true }
 
 [dependencies]
+arrow-array = { workspace = true }
+arrow-schema = { workspace = true }
 futures = { workspace = true }
 iceberg = { workspace = true }
+iceberg-catalog-memory = { workspace = true }
 iceberg-catalog-rest = { workspace = true }
+parquet = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["json"] }
+
+[[example]]
+name = "metrics-reporting"
+path = "src/metrics_reporting.rs"
 
 [[example]]
 name = "rest-catalog-namespace"
