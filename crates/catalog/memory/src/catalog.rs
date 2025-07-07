@@ -277,12 +277,81 @@ impl Catalog for MemoryCatalog {
     }
 
     /// Update a table to the catalog.
-    async fn update_table(&self, _commit: TableCommit) -> Result<Table> {
-        Err(Error::new(
-            ErrorKind::FeatureUnsupported,
-            "MemoryCatalog does not currently support updating tables.",
-        ))
+    async fn update_table(&self, mut commit: TableCommit) -> Result<Table> {
+        let table = self.load_table(commit.identifier()).await?;
+
+        for requirement in commit.take_requirements() {
+            requirement.check(Some(table.metadata()))?;
+        }
+
+        let mut metadata_builder = TableMetadataBuilder::new_from_metadata(
+            table.metadata().clone(),
+            table.metadata_location().map(str::to_string),
+        );
+
+        for update in commit.take_updates() {
+            metadata_builder = update.apply(metadata_builder)?;
+        }
+
+        let metadata = metadata_builder.build()?;
+
+        let current_metadata_version =
+            if let Some(current_metadata_location) = table.metadata_location() {
+                parse_metadata_version(current_metadata_location)?
+            } else {
+                0
+            };
+
+        let metadata_location = format!(
+            "{}/metadata/{}-{}.metadata.json",
+            table.identifier().name(), // TODO: this is not correct
+            current_metadata_version + 1,
+            Uuid::new_v4()
+        );
+
+        self.file_io
+            .new_output(&metadata_location)?
+            .write(serde_json::to_vec(&metadata.metadata)?.into())
+            .await?;
+
+        let mut root_namespace_state = self.root_namespace_state.lock().await;
+
+        root_namespace_state
+            .update_metadata_location(table.identifier(), metadata_location.clone())?;
+
+        Table::builder()
+            .identifier(table.identifier().clone())
+            .metadata(metadata.metadata)
+            .metadata_location(metadata_location)
+            .file_io(self.file_io.clone())
+            .build()
     }
+}
+
+fn parse_metadata_version(metadata_location: &str) -> Result<i32> {
+    let (_path, file_name) = metadata_location.rsplit_once('/').ok_or(Error::new(
+        ErrorKind::Unexpected,
+        format!("Invalid metadata location: {}", metadata_location),
+    ))?;
+
+    let (version_str, _id_str) = file_name
+        .strip_suffix("metadata.json")
+        .ok_or(Error::new(
+            ErrorKind::Unexpected,
+            format!("Invalid metadata file ending: {}", file_name),
+        ))?
+        .split_once('-')
+        .ok_or(Error::new(
+            ErrorKind::Unexpected,
+            format!("Invalid metadata file name format: {}", file_name),
+        ))?;
+
+    Ok(version_str.parse::<i32>().map_err(|_| {
+        Error::new(
+            ErrorKind::Unexpected,
+            format!("No valid version in metadata file name: {}", file_name),
+        )
+    })?)
 }
 
 #[cfg(test)]
