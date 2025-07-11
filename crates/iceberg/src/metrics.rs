@@ -59,9 +59,7 @@ pub(crate) enum MetricsReport {
         /// If None, the scan is an unfiltered full table scan.
         filter: Option<Arc<Predicate>>,
 
-        /// If None, the scan projects all fields.
-        // TODO: We could default to listing all field names in those cases: check what Java is doing.
-        projected_field_names: Option<Vec<String>>,
+        projected_field_names: Arc<Vec<String>>,
         projected_field_ids: Arc<Vec<i32>>,
 
         metrics: Arc<ScanMetrics>,
@@ -74,7 +72,7 @@ pub(crate) enum MetricsReport {
 pub(crate) struct ScanMetrics {
     pub(crate) total_planning_duration: Duration,
 
-    // Manfiest-level metrics, computed by walking the snapshot's manifest list
+    // Manifest-level metrics, computed by walking the snapshot's manifest list
     // file entries and checking which manifests match the scan's predicates.
     pub(crate) total_data_manifests: u32,
     pub(crate) total_delete_manifests: u32,

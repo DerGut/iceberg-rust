@@ -207,12 +207,7 @@ impl<'a> TableScanBuilder<'a> {
     pub fn build(self) -> Result<TableScan> {
         let metrics_reporter = match self.metrics_reporter {
             Some(metrics_reporter) => metrics_reporter,
-            None => {
-                // When a table scan is constructed directly (not by a catalog),
-                // and the user didn't provide a metrics reporter, then we
-                // construct a new one.
-                Arc::new(LoggingMetricsReporter::new())
-            }
+            None => Arc::new(LoggingMetricsReporter::new()),
         };
 
         let snapshot = match self.snapshot_id {
@@ -232,7 +227,7 @@ impl<'a> TableScanBuilder<'a> {
                     return Ok(TableScan {
                         table: self.table.identifier().clone(),
                         batch_size: self.batch_size,
-                        column_names: self.column_names,
+                        column_names: self.column_names.map(Arc::new),
                         file_io: self.table.file_io().clone(),
                         plan_context: None,
                         concurrency_limit_data_files: self.concurrency_limit_data_files,
@@ -264,8 +259,7 @@ impl<'a> TableScanBuilder<'a> {
             }
         }
 
-        let mut field_ids = vec![];
-        let column_names = self.column_names.clone().unwrap_or_else(|| {
+        let all_column_names = self.column_names.clone().unwrap_or_else(|| {
             schema
                 .as_struct()
                 .fields()
@@ -274,7 +268,8 @@ impl<'a> TableScanBuilder<'a> {
                 .collect()
         });
 
-        for column_name in column_names.iter() {
+        let mut field_ids = vec![];
+        for column_name in all_column_names.iter() {
             let field_id = schema.field_id_by_name(column_name).ok_or_else(|| {
                 Error::new(
                     ErrorKind::DataInvalid,
@@ -307,6 +302,8 @@ impl<'a> TableScanBuilder<'a> {
             None
         };
 
+        let all_column_names = Arc::new(all_column_names);
+
         let plan_context = PlanContext {
             snapshot,
             table_metadata: self.table.metadata_ref(),
@@ -315,16 +312,22 @@ impl<'a> TableScanBuilder<'a> {
             predicate: self.filter.map(Arc::new),
             snapshot_bound_predicate: snapshot_bound_predicate.map(Arc::new),
             object_cache: self.table.object_cache(),
+            field_names: Arc::clone(&all_column_names),
             field_ids: Arc::new(field_ids),
             partition_filter_cache: Arc::new(PartitionFilterCache::new()),
             manifest_evaluator_cache: Arc::new(ManifestEvaluatorCache::new()),
             expression_evaluator_cache: Arc::new(ExpressionEvaluatorCache::new()),
         };
 
+        let column_names = match self.column_names {
+            Some(_) => Some(all_column_names), // Reuse the Arc from the plan context
+            None => None,                      // Implicit select all
+        };
+
         Ok(TableScan {
             table: self.table.identifier().clone(),
             batch_size: self.batch_size,
-            column_names: self.column_names,
+            column_names,
             file_io: self.table.file_io().clone(),
             plan_context: Some(plan_context),
             concurrency_limit_data_files: self.concurrency_limit_data_files,
@@ -348,7 +351,7 @@ pub struct TableScan {
     plan_context: Option<PlanContext>,
     batch_size: Option<usize>,
     file_io: FileIO,
-    column_names: Option<Vec<String>>,
+    column_names: Option<Arc<Vec<String>>>,
     /// The maximum number of manifest files that will be
     /// retrieved from [`FileIO`] concurrently
     concurrency_limit_manifest_files: usize,
@@ -374,7 +377,7 @@ impl TableScan {
             return Ok(Box::pin(futures::stream::empty()));
         };
 
-        // Initialize scan metrics for reporting.
+        // Start the planning phase timer.
         let plan_start_time = Instant::now();
 
         // used to stream ManifestEntryContexts between stages of the file plan operation
@@ -431,7 +434,7 @@ impl TableScan {
         mut error_tx: Sender<Result<FileScanTask>>,
     ) -> JoinHandle<()> {
         let concurrency_limit = self.concurrency_limit_manifest_files;
-        let handle = spawn(async move {
+        spawn(async move {
             let result = futures::stream::iter(manifest_files)
                 .try_for_each_concurrent(concurrency_limit, |ctx| async move {
                     ctx.fetch_manifest_and_stream_manifest_entries().await
@@ -441,9 +444,7 @@ impl TableScan {
             if let Err(error) = result {
                 let _ = error_tx.send(Err(error)).await;
             }
-        });
-
-        handle
+        })
     }
 
     fn spawn_process_delete_manifest_entries(
@@ -551,10 +552,10 @@ impl TableScan {
         let filter = plan_context.predicate.clone();
         let schema_id = plan_context.snapshot_schema.schema_id();
         let projected_field_ids = plan_context.field_ids.clone();
-        let projected_field_names = self.column_names.clone();
+        let projected_field_names = plan_context.field_names.clone();
 
         let metrics_reporter = Arc::clone(&self.metrics_reporter);
-        let handle = spawn(async move {
+        spawn(async move {
             let metrics = aggregate_metrics(
                 plan_start_time,
                 manifest_metrics,
@@ -576,9 +577,7 @@ impl TableScan {
             };
 
             metrics_reporter.report(report).await;
-        });
-
-        handle
+        })
     }
 
     /// Returns an [`ArrowRecordBatchStream`].
@@ -598,9 +597,9 @@ impl TableScan {
             .await
     }
 
-    /// Returns a reference to the column names of the table scan.
+    /// Returns the column names of the table scan.
     pub fn column_names(&self) -> Option<&[String]> {
-        self.column_names.as_deref()
+        self.column_names.as_ref().map(|names| names.as_slice())
     }
 
     /// Returns a reference to the snapshot of the table scan.
@@ -1357,8 +1356,8 @@ pub mod tests {
 
         let table_scan = table.scan().select(["x", "y"]).build().unwrap();
         assert_eq!(
-            Some(vec!["x".to_string(), "y".to_string()]),
-            table_scan.column_names
+            Some(&["x".to_string(), "y".to_string()][..]),
+            table_scan.column_names()
         );
 
         let table_scan = table
@@ -1367,7 +1366,7 @@ pub mod tests {
             .select(["z"])
             .build()
             .unwrap();
-        assert_eq!(Some(vec!["z".to_string()]), table_scan.column_names);
+        assert_eq!(Some(&["z".to_string()][..]), table_scan.column_names());
     }
 
     #[test]
@@ -2032,7 +2031,7 @@ pub mod tests {
                 assert_eq!(projected_field_ids, &Arc::new(vec![1, 2]));
                 assert_eq!(
                     projected_field_names,
-                    &Some(vec!["x".to_string(), "y".to_string()])
+                    &Arc::new(vec!["x".to_string(), "y".to_string()])
                 );
 
                 assert_metrics(metrics);
