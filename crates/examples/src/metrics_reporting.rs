@@ -67,7 +67,7 @@ async fn main() {
 
     let scan = table
         .scan()
-        .select(vec!["col1".to_string()])
+        .select_all()
         .with_filter(Predicate::Unary(UnaryExpression::new(
             PredicateOperator::NotNull,
             Reference::new("col1"),
