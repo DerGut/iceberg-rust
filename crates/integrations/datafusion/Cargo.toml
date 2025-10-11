@@ -31,8 +31,7 @@ repository = { workspace = true }
 [dependencies]
 anyhow = { workspace = true }
 async-trait = { workspace = true }
-# Exclude the `compression` feature.
-datafusion = { workspace = true, default-features = false }
+datafusion = { workspace = true }
 futures = { workspace = true }
 iceberg = { workspace = true }
 parquet = { workspace = true }

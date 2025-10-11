@@ -62,7 +62,8 @@ bytes = "1.10"
 chrono = "0.4.41"
 clap = { version = "4.5.48", features = ["derive", "cargo"] }
 ctor = "0.2.8"
-datafusion = "50"
+# Exclude the `compression` feature.
+datafusion = { version = "50", default-features = false }
 datafusion-cli = "50"
 datafusion-sqllogictest = "50"
 derive_builder = "0.20"
