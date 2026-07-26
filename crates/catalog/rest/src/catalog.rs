@@ -463,7 +463,7 @@ struct RestContext {
 impl RestContext {
     async fn query_catalog(&self, request: Request) -> Result<Response> {
         self.client
-            .query_catalog(Arc::clone(&self.session), request)
+            .query_catalog(self.session.as_ref(), request)
             .await
     }
 }
@@ -540,7 +540,8 @@ impl RestCatalog {
                 let init_session = self.auth_manager.init_session().await?;
 
                 let catalog_config =
-                    RestCatalog::load_config(init_session, &client, &self.user_config).await?;
+                    RestCatalog::load_config(init_session.as_ref(), &client, &self.user_config)
+                        .await?;
                 let config = self.user_config.clone().merge_with_config(catalog_config);
                 let client = client.update_with(&config).await?;
 
@@ -562,7 +563,7 @@ impl RestCatalog {
     ///
     /// It's required for a REST catalog to update its config after creation.
     async fn load_config(
-        session: Arc<dyn AuthSession>,
+        session: &dyn AuthSession,
         client: &HttpClient,
         user_config: &RestCatalogConfig,
     ) -> Result<CatalogConfig> {
@@ -1955,8 +1956,8 @@ mod tests {
         struct CapturingManager(Arc<AsyncMutex<Option<HashMap<String, String>>>>);
         #[async_trait]
         impl AuthManager for CapturingManager {
-            async fn init_session(&self) -> Result<Arc<dyn AuthSession>> {
-                Ok(Arc::new(PlainSession))
+            async fn init_session(&self) -> Result<Box<dyn AuthSession>> {
+                Ok(Box::new(PlainSession))
             }
             async fn catalog_session(
                 &self,
@@ -2067,8 +2068,8 @@ mod tests {
         struct GuardManager(Arc<AtomicBool>);
         #[async_trait]
         impl AuthManager for GuardManager {
-            async fn init_session(&self) -> Result<Arc<dyn AuthSession>> {
-                Ok(Arc::new(GuardSession(self.0.clone())))
+            async fn init_session(&self) -> Result<Box<dyn AuthSession>> {
+                Ok(Box::new(GuardSession(self.0.clone())))
             }
             async fn catalog_session(
                 &self,
@@ -2126,7 +2127,7 @@ mod tests {
         struct StubAuthManager;
         #[async_trait]
         impl AuthManager for StubAuthManager {
-            async fn init_session(&self) -> Result<Arc<dyn AuthSession>> {
+            async fn init_session(&self) -> Result<Box<dyn AuthSession>> {
                 unimplemented!()
             }
             async fn catalog_session(

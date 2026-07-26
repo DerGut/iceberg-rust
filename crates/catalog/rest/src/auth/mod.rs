@@ -44,7 +44,7 @@ pub const AUTH_TYPE_OAUTH2: &str = "oauth2";
 pub trait AuthManager: Debug + Send + Sync {
     /// Session used for the initial `/v1/config` handshake, built from the
     /// user-supplied configuration.
-    async fn init_session(&self) -> Result<Arc<dyn AuthSession>>;
+    async fn init_session(&self) -> Result<Box<dyn AuthSession>>;
 
     /// Session used for all subsequent catalog requests, given the properties
     /// merged from the user configuration and the server's config response.
@@ -134,8 +134,8 @@ struct NoopSession;
 
 #[async_trait]
 impl AuthManager for NoopAuthManager {
-    async fn init_session(&self) -> Result<Arc<dyn AuthSession>> {
-        Ok(Arc::new(NoopSession))
+    async fn init_session(&self) -> Result<Box<dyn AuthSession>> {
+        Ok(Box::new(NoopSession))
     }
 
     async fn catalog_session(

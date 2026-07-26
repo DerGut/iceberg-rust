@@ -17,7 +17,6 @@
 
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
 
 use iceberg::{Error, ErrorKind, Result};
 use reqwest::header::HeaderMap;
@@ -93,7 +92,7 @@ impl HttpClient {
     // returns a `Response`.
     pub async fn query_catalog(
         &self,
-        session: Arc<dyn AuthSession>,
+        session: &dyn AuthSession,
         mut request: Request,
     ) -> Result<Response> {
         // Authenticate first, then apply extra headers, so a configured

@@ -138,8 +138,8 @@ impl Debug for OAuth2Manager {
 
 #[async_trait]
 impl AuthManager for OAuth2Manager {
-    async fn init_session(&self) -> Result<Arc<dyn AuthSession>> {
-        Ok(Arc::new(OAuth2Session {
+    async fn init_session(&self) -> Result<Box<dyn AuthSession>> {
+        Ok(Box::new(OAuth2Session {
             client: self.client.clone(),
             token: self.token.clone(),
             params: self.init_params.clone(),
