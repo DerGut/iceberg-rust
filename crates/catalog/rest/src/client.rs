@@ -25,7 +25,7 @@ use reqwest::{Client, IntoUrl, Method, Request, RequestBuilder, Response};
 use serde::de::DeserializeOwned;
 
 use crate::RestCatalogConfig;
-use crate::auth::{AuthManager, AuthRequest, AuthSession};
+use crate::auth::{AuthRequest, AuthSession};
 
 pub(crate) struct HttpClient {
     client: Client,
@@ -34,10 +34,6 @@ pub(crate) struct HttpClient {
     extra_headers: HeaderMap,
     /// Whether to disable header redaction in error logs (defaults to false for security).
     disable_header_redaction: bool,
-    /// The auth manager living for the lifetime of the catalog.
-    auth_manager: Arc<dyn AuthManager>,
-    /// The session authenticating requests in the current phase.
-    session: Arc<dyn AuthSession>,
 }
 
 impl Debug for HttpClient {
@@ -52,14 +48,10 @@ impl Debug for HttpClient {
 impl HttpClient {
     /// Create a new http client.
     pub async fn new(cfg: &RestCatalogConfig) -> Result<Self> {
-        let auth_manager = cfg.resolve_auth_manager()?;
-        let session = auth_manager.init_session().await?;
         Ok(HttpClient {
             client: cfg.client(),
             extra_headers: cfg.extra_headers()?,
             disable_header_redaction: cfg.disable_header_redaction(),
-            auth_manager,
-            session,
         })
     }
 
@@ -76,55 +68,18 @@ impl HttpClient {
             client: _,
             extra_headers: current_headers,
             disable_header_redaction: _,
-            auth_manager,
-            session: init_session,
         } = self;
-        // Release the init session first, so a manager whose init session
-        // guards a one-shot resource can build its catalog session.
-        drop(init_session);
 
         let extra_headers = (!cfg.extra_headers()?.is_empty())
             .then(|| cfg.extra_headers())
             .transpose()?
             .unwrap_or(current_headers);
-        let session = auth_manager.catalog_session(&cfg.auth_props()).await?;
+
         Ok(HttpClient {
             client: cfg.client(),
             extra_headers,
             disable_header_redaction: cfg.disable_header_redaction(),
-            auth_manager,
-            session,
         })
-    }
-
-    /// The session authenticating requests in the current phase.
-    pub(crate) fn session(&self) -> &Arc<dyn AuthSession> {
-        &self.session
-    }
-
-    /// Testing only: the bearer token the current session would attach.
-    ///
-    /// Authenticates a throwaway request (never sent) and reads the header
-    /// back, so it works for any [`AuthSession`] without a test-only trait
-    /// method.
-    #[cfg(test)]
-    pub(crate) async fn token(&self) -> Option<String> {
-        let mut request = self
-            .client
-            .request(Method::GET, "http://localhost/token-probe")
-            .build()
-            .ok()?;
-        self.session
-            .authenticate(&mut AuthRequest::new(&mut request))
-            .await
-            .ok()?;
-        request
-            .headers()
-            .get(reqwest::header::AUTHORIZATION)?
-            .to_str()
-            .ok()?
-            .strip_prefix("Bearer ")
-            .map(str::to_string)
     }
 
     #[inline]
@@ -136,10 +91,14 @@ impl HttpClient {
 
     // Queries the Iceberg REST catalog after authentication with the given `Request` and
     // returns a `Response`.
-    pub async fn query_catalog(&self, mut request: Request) -> Result<Response> {
+    pub async fn query_catalog(
+        &self,
+        session: Arc<dyn AuthSession>,
+        mut request: Request,
+    ) -> Result<Response> {
         // Authenticate first, then apply extra headers, so a configured
         // `header.authorization` keeps overriding a token (unchanged behavior).
-        self.session
+        session
             .authenticate(&mut AuthRequest::new(&mut request))
             .await?;
         request.headers_mut().extend(self.extra_headers.clone());
