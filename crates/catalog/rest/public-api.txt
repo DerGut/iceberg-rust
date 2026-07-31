@@ -231,6 +231,7 @@ pub fn iceberg_catalog_rest::RestCatalog::update_table<'life0, 'async_trait>(&'l
 pub struct iceberg_catalog_rest::RestCatalogBuilder
 impl iceberg_catalog_rest::RestCatalogBuilder
 pub fn iceberg_catalog_rest::RestCatalogBuilder::with_client(self, client: reqwest::async_impl::client::Client) -> Self
+pub fn iceberg_catalog_rest::RestCatalogBuilder::with_page_size(self, page_size: u32) -> Self
 impl core::default::Default for iceberg_catalog_rest::RestCatalogBuilder
 pub fn iceberg_catalog_rest::RestCatalogBuilder::default() -> Self
 impl core::fmt::Debug for iceberg_catalog_rest::RestCatalogBuilder
@@ -288,5 +289,6 @@ pub fn iceberg_catalog_rest::UpdateNamespacePropertiesResponse::serialize<__S>(&
 impl<'de> serde_core::de::Deserialize<'de> for iceberg_catalog_rest::UpdateNamespacePropertiesResponse
 pub fn iceberg_catalog_rest::UpdateNamespacePropertiesResponse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub const iceberg_catalog_rest::REST_CATALOG_PROP_DISABLE_HEADER_REDACTION: &str
+pub const iceberg_catalog_rest::REST_CATALOG_PROP_PAGE_SIZE: &str
 pub const iceberg_catalog_rest::REST_CATALOG_PROP_URI: &str
 pub const iceberg_catalog_rest::REST_CATALOG_PROP_WAREHOUSE: &str
