@@ -172,10 +172,21 @@ impl HttpClient {
 
     /// Sends `request` to the Iceberg REST catalog, authenticated by this
     /// client's session.
-    pub(crate) async fn query_catalog(&self, mut request: HttpRequest) -> Result<HttpResponse> {
+    pub(crate) async fn query_catalog(&self, request: HttpRequest) -> Result<HttpResponse> {
+        self.query_catalog_with_auth_session(self.auth_session.as_ref(), request)
+            .await
+    }
+
+    /// Sends `request` to the Iceberg REST catalog, authenticated by
+    /// `auth_session` instead of this client's session.
+    pub(crate) async fn query_catalog_with_auth_session(
+        &self,
+        auth_session: &dyn AuthSession,
+        mut request: HttpRequest,
+    ) -> Result<HttpResponse> {
         // Authenticate first, then apply extra headers, so a configured
         // `header.authorization` keeps overriding a token (unchanged behavior).
-        self.auth_session.authenticate(&mut request).await?;
+        auth_session.authenticate(&mut request).await?;
         let mut request = request.into_inner();
         request.headers_mut().extend(self.extra_headers.clone());
         HttpResponse::read(self.client.execute(request).await?).await

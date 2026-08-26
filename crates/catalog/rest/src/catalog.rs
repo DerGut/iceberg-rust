@@ -456,10 +456,7 @@ impl RestClient {
         // it before deriving the catalog session.
         let catalog_config = {
             let init_session = auth_manager
-                .init_session(
-                    &http_client.without_auth_session(),
-                    &Self::auth_props(user_config),
-                )
+                .init_session(&http_client, &Self::auth_props(user_config))
                 .await?;
             Self::load_config(
                 &http_client.with_auth_session(Arc::from(init_session)),
@@ -478,10 +475,7 @@ impl RestClient {
         // The manager is handed an unauthenticated client: its own
         // requests must not be signed by the session it is deriving.
         let catalog_session = auth_manager
-            .catalog_session(
-                &http_client.without_auth_session(),
-                &Self::auth_props(&config),
-            )
+            .catalog_session(&http_client, &Self::auth_props(&config))
             .await?;
 
         Ok(Self {
@@ -513,8 +507,7 @@ impl RestClient {
             .contextual_session(context, Arc::clone(&self.catalog_session))
             .await?;
         self.http_client
-            .with_auth_session(session)
-            .query_catalog(request)
+            .query_catalog_with_auth_session(session.as_ref(), request)
             .await
     }
 
@@ -2582,6 +2575,86 @@ mod tests {
 
         catalog.client().await.unwrap();
         config_mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_auth_manager_receives_unauthenticated_clients() {
+        #[derive(Debug)]
+        struct HeaderSession;
+        #[async_trait]
+        impl AuthSession for HeaderSession {
+            async fn authenticate(&self, request: &mut HttpRequest) -> Result<()> {
+                request.headers_mut().insert(
+                    header::AUTHORIZATION,
+                    HeaderValue::from_static("Bearer init-session"),
+                );
+                Ok(())
+            }
+        }
+
+        #[derive(Debug)]
+        struct ProbingManager {
+            init_probe_url: String,
+            catalog_probe_url: String,
+        }
+        #[async_trait]
+        impl AuthManager for ProbingManager {
+            async fn init_session(
+                &self,
+                client: &HttpClient,
+                _props: &HashMap<String, String>,
+            ) -> Result<Box<dyn AuthSession>> {
+                client
+                    .post_form(&self.init_probe_url, &HeaderMap::new(), &HashMap::new())
+                    .await?;
+                Ok(Box::new(HeaderSession))
+            }
+
+            async fn catalog_session(
+                &self,
+                client: &HttpClient,
+                _props: &HashMap<String, String>,
+            ) -> Result<Arc<dyn AuthSession>> {
+                client
+                    .post_form(&self.catalog_probe_url, &HeaderMap::new(), &HashMap::new())
+                    .await?;
+                Ok(Arc::new(HeaderSession))
+            }
+        }
+
+        let mut server = Server::new_async().await;
+        let init_probe = server
+            .mock("POST", "/init-probe")
+            .match_header("authorization", mockito::Matcher::Missing)
+            .with_status(200)
+            .create_async()
+            .await;
+        let config_mock = server
+            .mock("GET", "/v1/config")
+            .match_header("authorization", "Bearer init-session")
+            .with_status(200)
+            .with_body(r#"{"defaults": {}, "overrides": {}}"#)
+            .create_async()
+            .await;
+        let catalog_probe = server
+            .mock("POST", "/catalog-probe")
+            .match_header("authorization", mockito::Matcher::Missing)
+            .with_status(200)
+            .create_async()
+            .await;
+        let catalog = test_catalog_with(
+            RestCatalogConfig::builder().uri(server.url()).build(),
+            Some(Arc::new(ProbingManager {
+                init_probe_url: format!("{}/init-probe", server.url()),
+                catalog_probe_url: format!("{}/catalog-probe", server.url()),
+            })),
+        );
+
+        catalog.client().await.unwrap();
+
+        init_probe.assert_async().await;
+        config_mock.assert_async().await;
+        catalog_probe.assert_async().await;
     }
 
     #[tokio::test]
