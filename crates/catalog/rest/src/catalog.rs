@@ -420,8 +420,8 @@ struct RestClient {
     auth_manager: Arc<dyn AuthManager>,
     /// The catalog-wide session passed to [`AuthManager::contextual_session`].
     catalog_session: Arc<dyn AuthSession>,
-    /// Shared HTTP transport and configuration. It remains unauthenticated;
-    /// request-time clones attach the contextual session.
+    /// Shared HTTP transport and configuration. Authentication is supplied
+    /// explicitly for each request.
     http_client: HttpClient,
     /// Runtime config is fetched from rest server and stored here.
     ///
@@ -458,11 +458,7 @@ impl RestClient {
             let init_session = auth_manager
                 .init_session(&http_client, &Self::auth_props(user_config))
                 .await?;
-            Self::load_config(
-                &http_client.with_auth_session(Arc::from(init_session)),
-                user_config,
-            )
-            .await?
+            Self::load_config(&http_client, init_session.as_ref(), user_config).await?
         };
         // Use the advertised endpoints as-is, falling back to
         // `DEFAULT_ENDPOINTS` when absent or empty.
@@ -490,10 +486,7 @@ impl RestClient {
     /// Testing only: the bearer token the catalog session would attach.
     #[cfg(test)]
     async fn token(&self) -> Option<String> {
-        self.http_client
-            .with_auth_session(Arc::clone(&self.catalog_session))
-            .token()
-            .await
+        self.http_client.token(self.catalog_session.as_ref()).await
     }
 
     /// Sends `request` with the authentication derived for `context`.
@@ -507,7 +500,7 @@ impl RestClient {
             .contextual_session(context, Arc::clone(&self.catalog_session))
             .await?;
         self.http_client
-            .query_catalog_with_auth_session(session.as_ref(), request)
+            .query_catalog(session.as_ref(), request)
             .await
     }
 
@@ -535,6 +528,7 @@ impl RestClient {
     /// It's required for a REST catalog to update its config after creation.
     async fn load_config(
         http_client: &HttpClient,
+        auth_session: &dyn AuthSession,
         user_config: &RestCatalogConfig,
     ) -> Result<CatalogConfig> {
         let mut request_builder = http_client.request(Method::GET, user_config.config_endpoint());
@@ -545,7 +539,7 @@ impl RestClient {
 
         let request = HttpRequest::build(request_builder)?;
 
-        let http_response = http_client.query_catalog(request).await?;
+        let http_response = http_client.query_catalog(auth_session, request).await?;
 
         match http_response.status() {
             StatusCode::OK => deserialize_catalog_response(http_response),
@@ -2578,7 +2572,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_auth_manager_receives_unauthenticated_clients() {
+    async fn test_auth_manager_requests_have_no_ambient_authentication() {
         #[derive(Debug)]
         struct HeaderSession;
         #[async_trait]
@@ -2605,7 +2599,12 @@ mod tests {
                 _props: &HashMap<String, String>,
             ) -> Result<Box<dyn AuthSession>> {
                 client
-                    .post_form(&self.init_probe_url, &HeaderMap::new(), &HashMap::new())
+                    .post_form(
+                        &self.init_probe_url,
+                        &HeaderMap::new(),
+                        &HashMap::new(),
+                        None,
+                    )
                     .await?;
                 Ok(Box::new(HeaderSession))
             }
@@ -2616,7 +2615,12 @@ mod tests {
                 _props: &HashMap<String, String>,
             ) -> Result<Arc<dyn AuthSession>> {
                 client
-                    .post_form(&self.catalog_probe_url, &HeaderMap::new(), &HashMap::new())
+                    .post_form(
+                        &self.catalog_probe_url,
+                        &HeaderMap::new(),
+                        &HashMap::new(),
+                        None,
+                    )
                     .await?;
                 Ok(Arc::new(HeaderSession))
             }

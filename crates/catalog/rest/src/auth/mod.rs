@@ -45,9 +45,10 @@ pub const AUTH_TYPE_OAUTH2: &str = "oauth2";
 /// It builds the authentication sessions used by the catalog.
 ///
 /// [`Self::init_session`] and [`Self::catalog_session`] are handed the
-/// catalog's [`HttpClient`], which an implementation may reuse for its own
-/// requests (e.g. a token exchange) so that they share the catalog's
-/// connection pool and configuration.
+/// catalog's unauthenticated [`HttpClient`], which an implementation may reuse
+/// for its own requests (e.g. a token exchange) so that they share the
+/// catalog's connection pool and configuration. Authentication is supplied
+/// explicitly when sending a request.
 #[async_trait]
 pub trait AuthManager: Debug + Send + Sync {
     /// Session used for the initial `/v1/config` handshake, given the

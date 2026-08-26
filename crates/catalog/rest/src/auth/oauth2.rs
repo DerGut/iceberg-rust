@@ -281,7 +281,7 @@ impl ClientCredentialsConfig {
 
         let response = self
             .client
-            .post_form(&self.token_endpoint, &self.extra_headers, &params)
+            .post_form(&self.token_endpoint, &self.extra_headers, &params, None)
             .await?;
         let status = response.status();
         let body = response.body();
