@@ -688,6 +688,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_zero_idle_timeout_disables_contextual_session_reuse() {
+        let manager = OAuth2Manager::new("http://localhost/unused").with_token("parent-token");
+        let parent = manager
+            .catalog_session(
+                &test_client(),
+                &HashMap::from([(AUTH_SESSION_TIMEOUT_MS_PROP.to_string(), "0".to_string())]),
+            )
+            .await
+            .unwrap();
+        let first_context = context_with_token("session-1", "first-token");
+        let replacement_context = context_with_token("session-1", "replacement-token");
+
+        let first_session = manager
+            .contextual_session(&first_context, parent.clone())
+            .await
+            .unwrap();
+        let replacement_session = manager
+            .contextual_session(&replacement_context, parent)
+            .await
+            .unwrap();
+
+        assert!(!Arc::ptr_eq(&first_session, &replacement_session));
+        assert_eq!(
+            bearer_token(&replacement_session).await.as_deref(),
+            Some("replacement-token")
+        );
+    }
+
+    #[tokio::test]
     async fn test_context_token_takes_precedence_and_is_cached_by_session_id() {
         let manager = OAuth2Manager::new("http://localhost/unused").with_token("parent-token");
         let parent = manager
