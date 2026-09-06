@@ -542,6 +542,16 @@ mod tests {
         )
     }
 
+    fn context_with_token(session_id: &str, token: &str) -> SessionContext {
+        SessionContext::builder()
+            .session_id(session_id.to_string())
+            .credentials(HashMap::from([(
+                "token".to_string(),
+                SensitiveString::from(token.to_string()),
+            )]))
+            .build()
+    }
+
     async fn bearer_token(session: &Arc<dyn AuthSession>) -> Option<String> {
         let mut request = request();
         session.authenticate(&mut request).await.unwrap();
@@ -602,6 +612,34 @@ mod tests {
                 "Property {AUTH_SESSION_TIMEOUT_MS_PROP} must not exceed {max_timeout_ms} ms, got {}",
                 max_timeout_ms + 1
             )
+        );
+    }
+
+    #[tokio::test]
+    async fn test_contextual_session_requires_catalog_session_initialization() {
+        let manager = OAuth2Manager::new("http://localhost/unused").with_token("parent-token");
+        let parent: Arc<dyn AuthSession> = Arc::from(
+            manager
+                .init_session(&test_client(), &HashMap::new())
+                .await
+                .unwrap(),
+        );
+        let context = SessionContext::builder()
+            .credentials(HashMap::from([(
+                "token".to_string(),
+                SensitiveString::from("context-token".to_string()),
+            )]))
+            .build();
+
+        let error = manager
+            .contextual_session(&context, parent)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::PreconditionFailed);
+        assert_eq!(
+            error.message(),
+            "OAuth2 catalog session must be initialized before contextual sessions"
         );
     }
 
