@@ -554,7 +554,30 @@ mod tests {
     }
 
     #[test]
-    fn test_session_idle_timeout_maximum() {
+    fn test_session_idle_timeout_property() {
+        assert_eq!(
+            session_idle_timeout(&HashMap::new()).unwrap(),
+            DEFAULT_CONTEXTUAL_SESSION_IDLE_TIMEOUT
+        );
+
+        let custom_timeout = Duration::from_millis(1234);
+        let props = HashMap::from([(
+            AUTH_SESSION_TIMEOUT_MS_PROP.to_string(),
+            custom_timeout.as_millis().to_string(),
+        )]);
+        assert_eq!(session_idle_timeout(&props).unwrap(), custom_timeout);
+
+        let props = HashMap::from([(
+            AUTH_SESSION_TIMEOUT_MS_PROP.to_string(),
+            "not-an-integer".to_string(),
+        )]);
+        let error = session_idle_timeout(&props).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::PreconditionFailed);
+        assert_eq!(
+            error.message(),
+            format!("Property {AUTH_SESSION_TIMEOUT_MS_PROP} not an integer")
+        );
+
         let max_timeout_ms =
             u64::try_from(MAX_CONTEXTUAL_SESSION_IDLE_TIMEOUT.as_millis()).unwrap();
         let props = HashMap::from([(
