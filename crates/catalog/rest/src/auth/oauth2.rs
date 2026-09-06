@@ -308,6 +308,18 @@ impl ClientCredentialsConfig {
             })?;
             Err(Error::from(e))
         }?;
+        if !auth_res.token_type.eq_ignore_ascii_case("bearer")
+            && !auth_res.token_type.eq_ignore_ascii_case("N_A")
+        {
+            return Err(Error::new(
+                ErrorKind::DataInvalid,
+                format!(
+                    "Unsupported token type: {} (must be \"bearer\" or \"N_A\")",
+                    auth_res.token_type
+                ),
+            ));
+        }
+
         Ok(auth_res.access_token)
     }
 }
@@ -379,5 +391,71 @@ mod tests {
             req.headers().get("authorization").unwrap(),
             "Bearer tok-static"
         );
+    }
+
+    #[tokio::test]
+    async fn test_credential_accepts_n_a_token_type() {
+        let mut server = mockito::Server::new_async().await;
+        let token_mock = server
+            .mock("POST", "/tokens")
+            .with_status(200)
+            .with_body(r#"{"access_token":"token","token_type":"n_a"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let manager = OAuth2Manager::new(format!("{}/tokens", server.url()))
+            .with_credential(Some("client".to_string()), "secret".to_string());
+        let session = manager
+            .init_session(&test_client(), &HashMap::new())
+            .await
+            .unwrap();
+        let mut request = HttpRequest::new(
+            Client::new()
+                .get("https://rest.example.com/v1/config")
+                .build()
+                .unwrap(),
+        );
+
+        session.authenticate(&mut request).await.unwrap();
+
+        assert_eq!(
+            request.headers().get("authorization").unwrap(),
+            "Bearer token"
+        );
+        token_mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_credential_rejects_unsupported_token_type() {
+        let mut server = mockito::Server::new_async().await;
+        let token_mock = server
+            .mock("POST", "/tokens")
+            .with_status(200)
+            .with_body(r#"{"access_token":"token","token_type":"mac"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let manager = OAuth2Manager::new(format!("{}/tokens", server.url()))
+            .with_credential(Some("client".to_string()), "secret".to_string());
+        let session = manager
+            .init_session(&test_client(), &HashMap::new())
+            .await
+            .unwrap();
+        let mut request = HttpRequest::new(
+            Client::new()
+                .get("https://rest.example.com/v1/config")
+                .build()
+                .unwrap(),
+        );
+
+        let error = session.authenticate(&mut request).await.unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::DataInvalid);
+        assert_eq!(
+            error.message(),
+            "Unsupported token type: mac (must be \"bearer\" or \"N_A\")"
+        );
+        assert!(request.headers().get("authorization").is_none());
+        token_mock.assert_async().await;
     }
 }
