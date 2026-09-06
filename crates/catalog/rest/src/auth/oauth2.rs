@@ -718,13 +718,7 @@ mod tests {
         );
         assert_eq!(bearer_token(&parent).await.as_deref(), Some("parent-token"));
 
-        let same_id_with_new_token = SessionContext::builder()
-            .session_id("session-1".to_string())
-            .credentials(HashMap::from([(
-                "token".to_string(),
-                SensitiveString::from("replacement-token".to_string()),
-            )]))
-            .build();
+        let same_id_with_new_token = context_with_token("session-1", "replacement-token");
         let cached = manager
             .contextual_session(&same_id_with_new_token, parent)
             .await
