@@ -59,8 +59,8 @@ pub struct OAuth2Manager {
     /// explicitly configured): it is then recomputed from the merged URI in
     /// [`Self::catalog_session`], since `/v1/config` may override the URI.
     endpoint_is_default: bool,
-    /// Installed by `catalog_session`; replacing it atomically invalidates
-    /// contextual sessions derived from the previous catalog configuration.
+    /// Installed exactly once by `catalog_session` and then shared with every
+    /// contextual session derived from that catalog configuration.
     contextual_state: OnceLock<ContextualAuthState>,
 }
 
@@ -640,6 +640,50 @@ mod tests {
         assert_eq!(
             error.message(),
             "OAuth2 catalog session must be initialized before contextual sessions"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_catalog_session_can_only_be_initialized_once() {
+        let manager = OAuth2Manager::new("http://localhost/unused").with_token("parent-token");
+        manager
+            .catalog_session(&test_client(), &HashMap::new())
+            .await
+            .unwrap();
+
+        let error = manager
+            .catalog_session(&test_client(), &HashMap::new())
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::PreconditionFailed);
+        assert_eq!(
+            error.message(),
+            "OAuth2Manager catalog session already initialized"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_failed_catalog_session_initialization_can_be_retried() {
+        let manager = OAuth2Manager::new("http://localhost/unused").with_token("parent-token");
+        let invalid_props = HashMap::from([(
+            AUTH_SESSION_TIMEOUT_MS_PROP.to_string(),
+            "not-an-integer".to_string(),
+        )]);
+
+        let error = manager
+            .catalog_session(&test_client(), &invalid_props)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::PreconditionFailed);
+
+        let session = manager
+            .catalog_session(&test_client(), &HashMap::new())
+            .await
+            .unwrap();
+        assert_eq!(
+            bearer_token(&session).await.as_deref(),
+            Some("parent-token")
         );
     }
 

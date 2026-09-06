@@ -463,6 +463,10 @@ impl RestClient {
         let http_client = http_client.update_with(&config)?;
         // The manager is handed an unauthenticated client: its own
         // requests must not be signed by the session it is deriving.
+        // Keep `catalog_session` as the final fallible or suspending
+        // initialization step. `get_or_try_init` may retry an incomplete
+        // attempt, but a successfully returned session must be published
+        // without invoking the manager again.
         let session = auth_manager
             .catalog_session(
                 &http_client.without_auth_session(),
