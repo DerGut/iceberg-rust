@@ -135,3 +135,20 @@ impl AuthSession for NoopSession {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_default_contextual_session_reuses_catalog_session() {
+        let catalog_session: Arc<dyn AuthSession> = Arc::new(NoopSession);
+
+        let contextual_session = NoopAuthManager
+            .contextual_session(&SessionContext::empty(), catalog_session.clone())
+            .await
+            .unwrap();
+
+        assert!(Arc::ptr_eq(&contextual_session, &catalog_session));
+    }
+}
