@@ -732,6 +732,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_context_tokens_are_isolated_by_session_id() {
+        let manager = OAuth2Manager::new("http://localhost/unused").with_token("parent-token");
+        let parent = manager
+            .catalog_session(&test_client(), &HashMap::new())
+            .await
+            .unwrap();
+        let first_context = context_with_token("session-1", "first-token");
+        let second_context = context_with_token("session-2", "second-token");
+
+        let first_session = manager
+            .contextual_session(&first_context, parent.clone())
+            .await
+            .unwrap();
+        let second_session = manager
+            .contextual_session(&second_context, parent)
+            .await
+            .unwrap();
+
+        assert!(!Arc::ptr_eq(&first_session, &second_session));
+        assert_eq!(
+            bearer_token(&first_session).await.as_deref(),
+            Some("first-token")
+        );
+        assert_eq!(
+            bearer_token(&second_session).await.as_deref(),
+            Some("second-token")
+        );
+    }
+
+    #[tokio::test]
     async fn test_context_credential_is_exchanged_once_using_parent_auth() {
         let mut server = Server::new_async().await;
         let token_mock = server
