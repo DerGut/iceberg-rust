@@ -16,15 +16,15 @@ https://github.com/apache/iceberg/tree/4e61757dcf568051a13bb8d4c00ef57c9f248947.
 | scanned-data-manifests | count | ManifestGroup.entries: surviving manifests traversed | manifest selection | unfiltered, pruning |
 | skipped-data-manifests | count | ManifestGroup.entries: partition predicate or no live files | manifest selection | manifest-pruned, dead-only |
 | scanned-delete-manifests | count | DeleteFileIndex.Builder.loadDeleteFiles: surviving manifests | manifest selection | deletes |
-| skipped-delete-manifests | count | DeleteFileIndex.Builder.loadDeleteFiles: partition predicate or no live files | manifest selection | pruning |
+| skipped-delete-manifests | count | DeleteFileIndex.Builder.loadDeleteFiles: partition predicate or no live files | manifest selection | delete-manifest-pruned |
 | skipped-data-files | count | ManifestReader.entries: live entries failing predicates; NOT dead entries | process_data_manifest_entry | file-pruned, dead entries |
-| skipped-delete-files | count | ManifestReader.entries: live delete entries failing predicates | process_delete_manifest_entry | deletes |
+| skipped-delete-files | count | ManifestReader.entries: live delete entries failing predicates | process_delete_manifest_entry | writer-equality-pruning (observed difference) |
 | indexed-delete-files | count | metrics/ScanMetricsUtil.indexedDeleteFile: each indexed delete | accepted delete entry | unmatched and shared deletes |
 | equality-delete-files | count | same: equality content | accepted delete entry | equality |
 | positional-delete-files | count | same: position content excluding DVs | accepted delete entry | partition/path position |
 | dvs | count | same: Puffin position delete | accepted delete entry | DV |
 | result-data-files | count | metrics/ScanMetricsUtil.fileTask: selected data file | into_file_scan_task | all |
-| result-delete-files | count | same: sum of attached delete array lengths, not unique files | into_file_scan_task | unmatched and shared deletes |
+| result-delete-files | count | same: sum of attached delete array lengths, not unique files | into_file_scan_task | unmatched and shared deletes, writer-equality-association (observed difference) |
 | total-file-size-in-bytes | bytes | same: physical data file size | into_file_scan_task | all |
 | total-delete-file-size-in-bytes | bytes | same: attached delete physical size, DV content size (ScanTaskUtil.contentSizeInBytes) | into_file_scan_task | deletes, DV |
 | total-planning-duration | ns | SnapshotScan.planFiles: timer start before doPlanFiles, stop in close callback | invocation through exhaustion and successful joins | lifecycle |
@@ -63,12 +63,23 @@ snapshot schema. Java useSnapshot retains the current schema unless explicitly
 projected: the harness must project the snapshot schema to match Rust time travel.
 Java reports sanitized filters; Rust stores the predicate privately and logs only
 whether a filter is present, without literal values. Nested projection needs special care:
-Java TypeUtil.getProjectedIds selects leaf IDs; Rust only accepts direct-child
-selection today. Unsupported configurations must not be labeled parity.
+Java TypeUtil.getProjectedIds includes struct IDs and their selected descendants.
+The `nested-all` run observes Java IDs [1,2,3,9,10] versus Rust [1,2,3,9]: Rust
+currently records its resolved top-level task projection. Both plan the entire
+struct, with matching counters. Expanding Rust reports to Java's representation
+is an unresolved contract choice; direct nested-subfield selection is unsupported
+by the Rust planner. List/map projection reports have not been compared.
 
 Java also filters delete entries using row metrics and sequence-number thresholds;
-Rust's current delete entry planner filters partitions only. Do not silently
-reinterpret those differences as measured zeros or change delete planning here.
+Rust's current delete entry planner filters partitions only. The writer-equality-pruning
+fixture measures this difference: Java skips eq-99 using y < 20, while Rust indexes
+and attaches it. The unfiltered writer-equality-association fixture separately
+exercises DeleteFileIndex.canContainEqDeletes: Java uses data/delete bounds and
+attaches one delete total; Rust uses partition/sequence checks and attaches four.
+Their indexed counts both equal two. Counter differences follow actual plans;
+no zero, missing value, or normalization hides the difference. These existing
+planner optimizations are outside the metrics change. Sequence pruning is still
+source-audited, not differentially exercised.
 
 Partial projection difference observed by the harness: Java BaseScan.schema ->
 BaseScan.lazyColumnProjection -> TypeUtil.project constructs a new Schema with

@@ -29,6 +29,25 @@ for case in rust:
     mismatches = []
 
     def compare(metric, expected, actual, explanation):
+        if name == "writer-equality-pruning" and metric in {
+            "equality_delete_files", "indexed_delete_files", "result_delete_files",
+            "skipped_delete_files", "total_delete_file_size_in_bytes", "plans"
+        }:
+            explanation = ("Java ManifestReader filters eq-99.parquet using y < 20 and its writer-produced bounds; "
+                           "Rust process_delete_manifest_entry filters partitions only, so it indexes and attaches "
+                           "both eq-10.parquet and eq-99.parquet. This is an existing planning difference, "
+                           "with counters reflecting the different plans, not a normalization.")
+        if name == "writer-equality-association" and metric in {
+            "result_delete_files", "total_delete_file_size_in_bytes", "plans"
+        }:
+            explanation = ("Both index two equality deletes. Java DeleteFileIndex.canContainEqDeletes "
+                           "uses bounds to attach eq-10 only to written-10 and eq-99 to neither file. "
+                           "Rust uses partition and sequence checks, attaching both deletes to both files. "
+                           "The report counts actual attachments (Java 1, Rust 4).")
+        if name == "nested-all" and metric == "projection":
+            explanation = ("Java TypeUtil.getProjectedIds includes the selected struct and its child ID; "
+                           "Rust reports the resolved top-level task projection. Both plan the whole struct. "
+                           "Nested report representation remains a contract decision for review.")
         if expected != actual:
             mismatches.append(dict(fixture=name, metric=metric, java=expected,
                                    rust=actual, explanation=explanation))

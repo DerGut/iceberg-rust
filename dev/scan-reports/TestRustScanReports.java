@@ -56,10 +56,16 @@ class TestRustScanReports {
               .project(table.schemas().get(table.currentSnapshot().schemaId()));
         }
         if (!fixture.get("threshold").isNull()) {
-          scan = scan.filter(Expressions.lessThan("x", fixture.get("threshold").asLong()));
+          scan = scan.filter(Expressions.lessThan(fixture.get("filter_column").asText(), fixture.get("threshold").asLong()));
         }
         if (name.equals("all-pruned")) { scan = scan.filter(Expressions.equal("x", 200L)); }
         if (name.equals("projection")) { scan = scan.caseSensitive(false).select("X", "Z"); }
+        if (name.equals("metadata-projection")) {
+          // select() resolves table columns only; project() can include metadata columns.
+          scan = scan.project(new Schema(table.schema().schemaId(), List.of(
+              table.schema().findField("x"), MetadataColumns.FILE_PATH,
+              MetadataColumns.ROW_POSITION, MetadataColumns.SPEC_ID)));
+        }
         result.set("raw_filter", mapper.readTree(org.apache.iceberg.expressions.ExpressionParser.toJson(scan.filter())));
         ArrayNode plans = result.putArray("plans");
         try (CloseableIterable<FileScanTask> tasks = scan.planFiles()) {

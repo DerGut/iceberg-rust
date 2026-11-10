@@ -26,6 +26,7 @@ out.mkdir(parents=True, exist_ok=True)
 rust = json.loads((run / "results/rust.json").read_text())
 java = json.loads((run / "results/java.json").read_text())
 inventory = []
+comparison = (run / "results/comparison.json").read_text()
 for case, other in zip(rust, java):
     assert case["fixture"] == other["fixture"]
     metadata_path = pathlib.Path(case["metadata"])
@@ -37,13 +38,15 @@ for case, other in zip(rust, java):
             files.append({"path": str(path.relative_to(table_root)), "size": path.stat().st_size,
                           "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
     inventory.append({"fixture": case["fixture"], "files": files})
+    comparison = comparison.replace(str(table_root), "<fixture-root>").replace(str(metadata_path), "<metadata-file>")
     for obj in (case, other):
         normalized = json.dumps(obj).replace(str(table_root), "<fixture-root>").replace(str(metadata_path), "<metadata-file>")
         obj.clear()
         obj.update(json.loads(normalized))
 for name, value in [("rust", rust), ("java", java), ("inputs", inventory)]:
     (out / (name + ".json")).write_text(json.dumps(value, separators=(",", ":")) + "\n")
-(out / "comparison.json").write_text((run / "results/comparison.json").read_text())
+(out / "comparison.json").write_text(comparison)
+mismatched = [c["fixture"] for c in json.loads(comparison)["results"] if c["mismatches"]]
 manifest = {
     "rust_revision": (run / "rust-revision.txt").read_text().strip(),
     "rust_working_tree_patch": (run / "rust-working-tree.patch").read_text(),
@@ -51,7 +54,8 @@ manifest = {
     "runtime": (run / "runtime.txt").read_text().splitlines(),
     "gradle": "8.14.6 (pinned source wrapper)",
     "command": f"bash dev/scan-reports/run.sh {run}",
-    "comparison_exit_status": 1,
-    "explanation": "One preserved projection schema_id mismatch; all counters and plans match"
+    "comparison_exit_status": int(bool(mismatched)),
+    "mismatched_fixtures": mismatched,
+    "explanation": "All observed differences are retained; see comparison.json and SEMANTICS.md"
 }
 (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
