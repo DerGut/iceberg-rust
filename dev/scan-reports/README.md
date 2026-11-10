@@ -13,8 +13,9 @@ test-only field on `TableScan`. Reporter configuration is not exposed publicly.
 
 Java: `4e61757dcf568051a13bb8d4c00ef57c9f248947`.
 Rust upstream baseline: `63d3d522c44aec588ebb7207834a37a141c3837a`.
-PR #1 implementation: `875cc7c3b` on the parent branch. Its prerequisite commit
-`e8b42cc9a` isolates worker ownership and completion from report collection.
+PR #1 has three commits on the parent branch:
+`e8b42cc9a` (join-handle lifecycle), `e399fa9ad` (counting), and
+`59bef006a` (reporting). The final production tree is unchanged by this split.
 The [evidence manifest](evidence/manifest.json) records the implementation commit and runtime versions.
 
 Run from the repository root with JDK 17 or 21, Python 3, curl, and the repository
@@ -131,3 +132,9 @@ on PR #1 produced no diff. The worker-lifecycle prerequisite commit independentl
 passed all 106 scan tests before the reporting commit was added. The end-to-end
 harness ran on the clean revision recorded in the evidence and returned the
 documented nonzero comparison result, not an execution failure.
+
+The counting-only commit independently passed 109 scan tests, all-target/all-feature
+Clippy, and formatting. The last change only split commit history: the original
+Java execution pins are retained in the evidence manifest, alongside the rewritten
+source revision and proof that their Git trees are identical. The Java run was not
+repeated for this history-only change.
