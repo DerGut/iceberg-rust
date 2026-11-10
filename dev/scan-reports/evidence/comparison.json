@@ -72,6 +72,257 @@
       "fixture": "dv",
       "status": "match",
       "mismatches": []
+    },
+    {
+      "fixture": "dv-supersession",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "delete-manifest-pruned",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "writer-unfiltered",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "writer-file-pruned",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "writer-all-pruned",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "writer-equality-pruning",
+      "status": "mismatch",
+      "mismatches": [
+        {
+          "fixture": "writer-equality-pruning",
+          "metric": "equality_delete_files",
+          "java": 1,
+          "rust": 2,
+          "explanation": "Java ManifestReader filters eq-99.parquet using y < 20 and its writer-produced bounds; Rust process_delete_manifest_entry filters partitions only, so it indexes and attaches both eq-10.parquet and eq-99.parquet. This is an existing planning difference, with counters reflecting the different plans, not a normalization."
+        },
+        {
+          "fixture": "writer-equality-pruning",
+          "metric": "indexed_delete_files",
+          "java": 1,
+          "rust": 2,
+          "explanation": "Java ManifestReader filters eq-99.parquet using y < 20 and its writer-produced bounds; Rust process_delete_manifest_entry filters partitions only, so it indexes and attaches both eq-10.parquet and eq-99.parquet. This is an existing planning difference, with counters reflecting the different plans, not a normalization."
+        },
+        {
+          "fixture": "writer-equality-pruning",
+          "metric": "result_delete_files",
+          "java": 1,
+          "rust": 2,
+          "explanation": "Java ManifestReader filters eq-99.parquet using y < 20 and its writer-produced bounds; Rust process_delete_manifest_entry filters partitions only, so it indexes and attaches both eq-10.parquet and eq-99.parquet. This is an existing planning difference, with counters reflecting the different plans, not a normalization."
+        },
+        {
+          "fixture": "writer-equality-pruning",
+          "metric": "skipped_delete_files",
+          "java": 1,
+          "rust": 0,
+          "explanation": "Java ManifestReader filters eq-99.parquet using y < 20 and its writer-produced bounds; Rust process_delete_manifest_entry filters partitions only, so it indexes and attaches both eq-10.parquet and eq-99.parquet. This is an existing planning difference, with counters reflecting the different plans, not a normalization."
+        },
+        {
+          "fixture": "writer-equality-pruning",
+          "metric": "total_delete_file_size_in_bytes",
+          "java": 558,
+          "rust": 1116,
+          "explanation": "Java ManifestReader filters eq-99.parquet using y < 20 and its writer-produced bounds; Rust process_delete_manifest_entry filters partitions only, so it indexes and attaches both eq-10.parquet and eq-99.parquet. This is an existing planning difference, with counters reflecting the different plans, not a normalization."
+        },
+        {
+          "fixture": "writer-equality-pruning",
+          "metric": "plans",
+          "java": [
+            {
+              "path": "<fixture-root>/written-10.parquet",
+              "size": 1286,
+              "deletes": [
+                {
+                  "path": "<fixture-root>/eq-10.parquet",
+                  "size": 558,
+                  "content": 2,
+                  "content_size": null,
+                  "content_offset": null
+                }
+              ]
+            }
+          ],
+          "rust": [
+            {
+              "deletes": [
+                {
+                  "content": 2,
+                  "content_offset": null,
+                  "content_size": null,
+                  "path": "<fixture-root>/eq-10.parquet",
+                  "size": 558
+                },
+                {
+                  "content": 2,
+                  "content_offset": null,
+                  "content_size": null,
+                  "path": "<fixture-root>/eq-99.parquet",
+                  "size": 558
+                }
+              ],
+              "path": "<fixture-root>/written-10.parquet",
+              "size": 1286
+            }
+          ],
+          "explanation": "Java ManifestReader filters eq-99.parquet using y < 20 and its writer-produced bounds; Rust process_delete_manifest_entry filters partitions only, so it indexes and attaches both eq-10.parquet and eq-99.parquet. This is an existing planning difference, with counters reflecting the different plans, not a normalization."
+        }
+      ]
+    },
+    {
+      "fixture": "writer-equality-association",
+      "status": "mismatch",
+      "mismatches": [
+        {
+          "fixture": "writer-equality-association",
+          "metric": "result_delete_files",
+          "java": 1,
+          "rust": 4,
+          "explanation": "Both index two equality deletes. Java DeleteFileIndex.canContainEqDeletes uses bounds to attach eq-10 only to written-10 and eq-99 to neither file. Rust uses partition and sequence checks, attaching both deletes to both files. The report counts actual attachments (Java 1, Rust 4)."
+        },
+        {
+          "fixture": "writer-equality-association",
+          "metric": "total_delete_file_size_in_bytes",
+          "java": 558,
+          "rust": 2232,
+          "explanation": "Both index two equality deletes. Java DeleteFileIndex.canContainEqDeletes uses bounds to attach eq-10 only to written-10 and eq-99 to neither file. Rust uses partition and sequence checks, attaching both deletes to both files. The report counts actual attachments (Java 1, Rust 4)."
+        },
+        {
+          "fixture": "writer-equality-association",
+          "metric": "plans",
+          "java": [
+            {
+              "path": "<fixture-root>/written-10.parquet",
+              "size": 1286,
+              "deletes": [
+                {
+                  "path": "<fixture-root>/eq-10.parquet",
+                  "size": 558,
+                  "content": 2,
+                  "content_size": null,
+                  "content_offset": null
+                }
+              ]
+            },
+            {
+              "path": "<fixture-root>/written-50.parquet",
+              "size": 1286,
+              "deletes": []
+            }
+          ],
+          "rust": [
+            {
+              "deletes": [
+                {
+                  "content": 2,
+                  "content_offset": null,
+                  "content_size": null,
+                  "path": "<fixture-root>/eq-10.parquet",
+                  "size": 558
+                },
+                {
+                  "content": 2,
+                  "content_offset": null,
+                  "content_size": null,
+                  "path": "<fixture-root>/eq-99.parquet",
+                  "size": 558
+                }
+              ],
+              "path": "<fixture-root>/written-10.parquet",
+              "size": 1286
+            },
+            {
+              "deletes": [
+                {
+                  "content": 2,
+                  "content_offset": null,
+                  "content_size": null,
+                  "path": "<fixture-root>/eq-10.parquet",
+                  "size": 558
+                },
+                {
+                  "content": 2,
+                  "content_offset": null,
+                  "content_size": null,
+                  "path": "<fixture-root>/eq-99.parquet",
+                  "size": 558
+                }
+              ],
+              "path": "<fixture-root>/written-50.parquet",
+              "size": 1286
+            }
+          ],
+          "explanation": "Both index two equality deletes. Java DeleteFileIndex.canContainEqDeletes uses bounds to attach eq-10 only to written-10 and eq-99 to neither file. Rust uses partition and sequence checks, attaching both deletes to both files. The report counts actual attachments (Java 1, Rust 4)."
+        }
+      ]
+    },
+    {
+      "fixture": "nested-all",
+      "status": "mismatch",
+      "mismatches": [
+        {
+          "fixture": "nested-all",
+          "metric": "projection",
+          "java": [
+            [
+              1,
+              "x"
+            ],
+            [
+              2,
+              "y"
+            ],
+            [
+              3,
+              "z"
+            ],
+            [
+              9,
+              "details"
+            ],
+            [
+              10,
+              "details.value"
+            ]
+          ],
+          "rust": [
+            [
+              1,
+              "x"
+            ],
+            [
+              2,
+              "y"
+            ],
+            [
+              3,
+              "z"
+            ],
+            [
+              9,
+              "details"
+            ]
+          ],
+          "explanation": "Java TypeUtil.getProjectedIds includes the selected struct and its child ID; Rust reports the resolved top-level task projection. Both plan the whole struct. Nested report representation remains a contract decision for review."
+        }
+      ]
+    },
+    {
+      "fixture": "metadata-projection",
+      "status": "match",
+      "mismatches": []
     }
   ],
   "unsupported_report_fields": [

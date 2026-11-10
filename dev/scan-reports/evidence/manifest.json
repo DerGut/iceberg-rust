@@ -1,5 +1,5 @@
 {
-  "rust_revision": "e4a23c7ffe830a6a724d10601b561f725974d7c9",
+  "rust_revision": "bc555d76ea0d2688424105b6cf39af792930d66b",
   "rust_working_tree_patch": "",
   "java_revision": "4e61757dcf568051a13bb8d4c00ef57c9f248947",
   "runtime": [
@@ -17,25 +17,23 @@
     "Darwin MacBook-Pro-3.local 25.6.0 Darwin Kernel Version 25.6.0: Mon Oct 12 00:39:48 PDT 2026; root:xnu-12377.161.15.701.48~2/RELEASE_ARM64_T6041 arm64"
   ],
   "gradle": "8.14.6 (pinned source wrapper)",
-  "command": "bash dev/scan-reports/run.sh /tmp/scan-reporter-repro",
+  "command": "bash dev/scan-reports/run.sh /tmp/scan-expanded-final",
   "comparison_exit_status": 1,
-  "explanation": "One preserved projection schema_id mismatch; all counters and plans match",
-  "production_revision": "875cc7c3b9249f98cbaeef1b9803ad275043fc4d",
-  "lifecycle_revision": "e8b42cc9aee0e9fa30ccc78a654cbabb8919b520",
+  "mismatched_fixtures": [
+    "projection",
+    "writer-equality-pruning",
+    "writer-equality-association",
+    "nested-all"
+  ],
+  "explanation": "All observed differences are retained; see comparison.json and SEMANTICS.md",
+  "production_revision": "b5769a3d20fdccd4fa68f9b8bcb6fd7abdd65e6a",
+  "lifecycle_revision": "a5dc8d131287cfe8093e66e59a5cacd9a5ea0283",
   "checks": {
-    "library_tests": "2157 passed; 1 ignored; --all-features on production",
-    "validation_scan_tests": "118 passed; 2 ignored; exporter and benchmark run separately",
-    "clippy": "all targets, all features, -D warnings: passed on both branches",
-    "format": "cargo fmt --all -- --check: passed on both branches",
-    "public_api": "make generate-public-api: passed; no diff on production",
-    "counting_commit": "109 scan tests passed; all-target/all-feature Clippy and formatting passed independently"
-  },
-  "history_rewrite": {
-    "production_revision": "59bef006a45c69398feb79e7974bb34f79920087",
-    "counting_revision": "e399fa9ad3b2a295b62d8d010970c693d582a0a5",
-    "validation_source_revision": "9c3e6a556c1451e9c5f51d0514b7624bb803976a",
-    "validated_source_revision": "e4a23c7ffe830a6a724d10601b561f725974d7c9",
-    "identical_source_tree": "f63f448357bbd26609f1ee8297d8bcb7d36250e9",
-    "note": "Commit split only; the recorded execution was not repeated. Both source revisions have the identical Git tree."
+    "production_scan_tests": "103 passed (scan::tests, all features)",
+    "validation_scan_tests": "121 passed, 2 ignored (scan::, all features); exporter run separately",
+    "clippy": "all targets, all features, -D warnings passed on both branches",
+    "format": "cargo fmt --all -- --check passed on both branches",
+    "public_api": "make generate-public-api passed on production with no diff",
+    "lifecycle_commit": "delayed manifest failure and in-flight read cancellation tests passed independently"
   }
 }
