@@ -1,0 +1,81 @@
+{
+  "results": [
+    {
+      "fixture": "unfiltered",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "dead-only",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "manifest-pruned",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "file-pruned",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "all-pruned",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "projection",
+      "status": "mismatch",
+      "mismatches": [
+        {
+          "fixture": "projection",
+          "metric": "schema_id",
+          "java": 0,
+          "rust": 1,
+          "explanation": "Java TypeUtil.project constructs a partial schema with default ID 0; Rust intentionally retains the source schema ID"
+        }
+      ]
+    },
+    {
+      "fixture": "current-schema",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "time-travel",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "unmatched-delete",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "shared-position",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "path-position",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "equality",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "dv",
+      "status": "match",
+      "mismatches": []
+    }
+  ],
+  "unsupported_report_fields": [
+    "Java environment/options metadata"
+  ],
+  "duration_comparison": "unit and invocation count checked; elapsed values intentionally not equal"
+}

@@ -106,13 +106,13 @@ cargo test -p iceberg --lib --no-default-features \
 
 Public API generation produced no diff. The warm-cache debug benchmark alternates
 20 batches of 100 invocations, with ten data files and one shared delete, tracing
-disabled. On the split validation revision, the run after Java compilation completed
-measured medians of 54,930 ns disabled and 57,270 ns enabled (+4.26%).
-A prior run overlapped Java compilation; both runs and their context are retained
-in the evidence. These small, noisy observations do not establish a stable overhead
-or speedup. Both paths retain worker joins, so they isolate collection/finalization
-and do not measure the lifecycle ownership change against upstream's detached
-tasks. No large-scale or release-build benchmark was run.
+disabled. With the private reporter abstraction, medians were 61,902 ns without
+reporting and 63,049 ns with the logging reporter (+1.85%). The measured
+path includes reporter construction, collection, finalization, and delivery to a
+disabled tracing event. This small, noisy observation does not establish a stable
+overhead or speedup. Both paths retain worker joins, so this does not measure the
+lifecycle ownership change against upstream's detached tasks. No large-scale or
+release-build benchmark was run.
 
 Retained [comparison](evidence/comparison.json), [Rust captures](evidence/rust.json),
 [Java captures](evidence/java.json), [input hashes](evidence/inputs.json), and
@@ -123,11 +123,11 @@ run after comparison with:
 python3 dev/scan-reports/archive.py /tmp/iceberg-scan-reports /tmp/scan-evidence
 ```
 
-Split validation: all 115 scan tests passed on both branches. PR #1 has no ignored
-scan tests; the validation branch has the differential exporter and benchmark,
-which were run separately. All-target/all-feature Clippy and formatting passed
-on both branches. Public API generation on PR #1 produced no diff. The full library
-suite (2,154 passed) was previously run before the layout-only split; the focused
-scan suite was rerun after it. The end-to-end harness ran on the clean revision
-recorded in the evidence and returned the documented nonzero comparison result,
-not an execution failure.
+Reporter-refactor validation: 2,157 library tests passed with all features on PR #1
+(one pre-existing ignored test). All 118 scan tests passed on the validation branch;
+the ignored differential exporter and benchmark were run separately. All-target/
+all-feature Clippy and formatting passed on both branches. Public API generation
+on PR #1 produced no diff. The worker-lifecycle prerequisite commit independently
+passed all 106 scan tests before the reporting commit was added. The end-to-end
+harness ran on the clean revision recorded in the evidence and returned the
+documented nonzero comparison result, not an execution failure.
