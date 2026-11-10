@@ -63,7 +63,7 @@ pub(crate) enum MetricsReport {
 /// Reports include work planned ahead of consumption and have no success or cancellation tag.
 /// Iceberg constructs reports; consumers receive them through [`MetricsReporter`].
 #[derive(Debug)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, serde::Serialize))]
 pub(crate) struct ScanReport {
     pub(crate) table_ident: TableIdent,
     pub(crate) snapshot_id: i64,
@@ -119,7 +119,7 @@ impl ScanReport {
 
 /// Immutable scan-planning counters, distinct from Arrow row-reading metrics.
 #[derive(Debug)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, serde::Serialize))]
 pub(crate) struct ScanMetrics {
     pub(crate) total_data_manifests: u64,
     pub(crate) total_delete_manifests: u64,

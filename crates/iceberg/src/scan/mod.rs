@@ -825,6 +825,7 @@ mod tests {
     };
     use futures::{StreamExt, TryStreamExt, stream};
     use parquet::arrow::ArrowWriter;
+    use serde_json::json;
     use uuid::Uuid;
 
     use super::report::{Metrics, ScanReport};
@@ -5392,5 +5393,392 @@ mod tests {
                 ..Metrics::empty()
             });
         }
+    }
+    async fn add_unmatched_delete(fixture: &TableTestFixture) {
+        use crate::spec::{
+            DataContentType, DataFileBuilder, DataFileFormat, Literal, ManifestEntry,
+            ManifestListWriter, ManifestStatus, ManifestWriterBuilder, Struct,
+        };
+        let snapshot = fixture.table.metadata().current_snapshot().unwrap();
+        let schema = fixture.table.metadata().current_schema().clone();
+        let mut writer = ManifestWriterBuilder::new(
+            fixture.next_manifest_file(),
+            Some(snapshot.snapshot_id()),
+            schema,
+            fixture
+                .table
+                .metadata()
+                .default_partition_spec()
+                .as_ref()
+                .clone(),
+        )
+        .build_v2_deletes();
+        writer
+            .add_entry(
+                ManifestEntry::builder()
+                    .status(ManifestStatus::Added)
+                    .data_file(
+                        DataFileBuilder::default()
+                            .partition_spec_id(0)
+                            .content(DataContentType::PositionDeletes)
+                            .file_path(format!("{}/unmatched.parquet", fixture.table_location))
+                            .file_format(DataFileFormat::Parquet)
+                            .file_size_in_bytes(100)
+                            .record_count(1)
+                            .referenced_data_file(Some(format!(
+                                "{}/missing.parquet",
+                                fixture.table_location
+                            )))
+                            .partition(Struct::from_iter([Some(Literal::long(100))]))
+                            .build()
+                            .unwrap(),
+                    )
+                    .build(),
+            )
+            .unwrap();
+        let delete = writer.write_manifest_file().await.unwrap();
+        let scan = fixture.table.scan().build().unwrap();
+        let list = scan
+            .plan_context
+            .as_ref()
+            .unwrap()
+            .get_manifest_list()
+            .await
+            .unwrap();
+        let mut manifests = list.entries().to_vec();
+        manifests.push(delete);
+        let output = fixture
+            .table
+            .file_io()
+            .new_output(snapshot.manifest_list())
+            .unwrap()
+            .writer()
+            .await
+            .unwrap();
+        let mut writer = ManifestListWriter::v2(
+            output,
+            snapshot.snapshot_id(),
+            snapshot.parent_snapshot_id(),
+            snapshot.sequence_number(),
+        );
+        writer.add_manifests(manifests.into_iter()).unwrap();
+        writer.close().await.unwrap();
+    }
+
+    async fn materialize_fixture(fixture: &TableTestFixture, dead_only: bool) {
+        use std::sync::Arc;
+
+        use arrow_array::{
+            ArrayRef, BooleanArray, Float64Array, Int32Array, Int64Array, RecordBatch, StringArray,
+        };
+        use arrow_schema::DataType;
+
+        use crate::spec::{
+            DataContentType, DataFileFormat, FormatVersion, ManifestContentType,
+            ManifestListWriter, ManifestStatus, ManifestWriterBuilder, Schema,
+        };
+        let scan = fixture.table.scan().build().unwrap();
+        let context = scan.plan_context.as_ref().unwrap();
+        let list = context.get_manifest_list().await.unwrap();
+        let snapshot = &context.snapshot;
+        let mut manifests = vec![];
+        for file in list.entries() {
+            let manifest = context.object_cache.get_manifest(file).await.unwrap();
+            let schema = manifest.metadata().schema();
+            let builder = ManifestWriterBuilder::new(
+                fixture.next_manifest_file(),
+                Some(snapshot.snapshot_id()),
+                schema.clone(),
+                fixture
+                    .table
+                    .metadata()
+                    .partition_spec_by_id(file.partition_spec_id)
+                    .unwrap()
+                    .as_ref()
+                    .clone(),
+            );
+            let mut writer = match (fixture.table.metadata().format_version(), file.content) {
+                (FormatVersion::V3, ManifestContentType::Data) => builder.build_v3_data(),
+                (FormatVersion::V3, ManifestContentType::Deletes) => builder.build_v3_deletes(),
+                (_, ManifestContentType::Data) => builder.build_v2_data(),
+                (_, ManifestContentType::Deletes) => builder.build_v2_deletes(),
+            };
+            for entry in manifest.entries() {
+                if dead_only && entry.is_alive() {
+                    continue;
+                }
+                let mut entry = entry.as_ref().clone();
+                let data = &mut entry.data_file;
+                if !std::path::Path::new(data.file_path()).exists() {
+                    if data.file_format() == DataFileFormat::Puffin {
+                        use crate::puffin::{
+                            Blob, CompressionCodec, DELETION_VECTOR_V1, PuffinWriter,
+                        };
+                        let blob = crate::test_utils::encode_dv_blob([0]);
+                        data.content_size_in_bytes = Some(blob.len() as i64);
+                        data.content_offset = Some(4);
+                        let output = fixture
+                            .table
+                            .file_io()
+                            .new_output(data.file_path())
+                            .unwrap();
+                        let mut puffin = PuffinWriter::new(&output, Default::default(), false)
+                            .await
+                            .unwrap();
+                        puffin
+                            .add(
+                                Blob::builder()
+                                    .r#type(DELETION_VECTOR_V1.into())
+                                    .fields(vec![])
+                                    .snapshot_id(snapshot.snapshot_id())
+                                    .sequence_number(snapshot.sequence_number())
+                                    .data(blob)
+                                    .properties(Default::default())
+                                    .build(),
+                                CompressionCodec::None,
+                            )
+                            .await
+                            .unwrap();
+                        puffin.close().await.unwrap();
+                    } else {
+                        let file_schema = match data.content_type() {
+                            DataContentType::Data => schema.as_ref().clone(),
+                            DataContentType::EqualityDeletes => Schema::builder()
+                                .with_fields(
+                                    data.equality_ids()
+                                        .unwrap()
+                                        .iter()
+                                        .map(|id| schema.field_by_id(*id).unwrap().clone()),
+                                )
+                                .build()
+                                .unwrap(),
+                            DataContentType::PositionDeletes => Schema::builder()
+                                .with_fields([
+                                    crate::metadata_columns::get_metadata_field(
+                                        crate::metadata_columns::RESERVED_FIELD_ID_DELETE_FILE_PATH,
+                                    )
+                                    .unwrap()
+                                    .clone(),
+                                    crate::metadata_columns::get_metadata_field(
+                                        crate::metadata_columns::RESERVED_FIELD_ID_DELETE_FILE_POS,
+                                    )
+                                    .unwrap()
+                                    .clone(),
+                                ])
+                                .build()
+                                .unwrap(),
+                        };
+                        let arrow_schema =
+                            Arc::new(crate::arrow::schema_to_arrow_schema(&file_schema).unwrap());
+                        let x = if data.file_path().ends_with("x7.parquet") {
+                            7
+                        } else {
+                            100
+                        };
+                        let arrays: Vec<ArrayRef> = arrow_schema
+                            .fields()
+                            .iter()
+                            .map(|field| -> ArrayRef {
+                                match field.data_type() {
+                                    DataType::Int64 => {
+                                        Arc::new(Int64Array::from(vec![if field.name() == "x" {
+                                            x
+                                        } else {
+                                            0
+                                        }]))
+                                    }
+                                    DataType::Int32 => Arc::new(Int32Array::from(vec![x as i32])),
+                                    DataType::Float64 => Arc::new(Float64Array::from(vec![0.0])),
+                                    DataType::Boolean => Arc::new(BooleanArray::from(vec![false])),
+                                    DataType::Utf8 => Arc::new(StringArray::from(vec![
+                                        data.referenced_data_file().unwrap_or_else(|| {
+                                            format!("{}/0.parquet", fixture.table_location)
+                                        }),
+                                    ])),
+                                    ty => panic!("unsupported fixture type {ty}"),
+                                }
+                            })
+                            .collect();
+                        let batch = RecordBatch::try_new(arrow_schema.clone(), arrays).unwrap();
+                        let mut parquet = ArrowWriter::try_new(
+                            File::create(data.file_path()).unwrap(),
+                            arrow_schema,
+                            None,
+                        )
+                        .unwrap();
+                        parquet.write(&batch).unwrap();
+                        parquet.close().unwrap();
+                    }
+                }
+                data.file_size_in_bytes = fs::metadata(data.file_path()).unwrap().len();
+                match entry.status() {
+                    ManifestStatus::Added => writer.add_entry(entry).unwrap(),
+                    ManifestStatus::Existing => writer.add_existing_entry(entry).unwrap(),
+                    ManifestStatus::Deleted => writer.add_delete_entry(entry).unwrap(),
+                }
+            }
+            manifests.push(writer.write_manifest_file().await.unwrap());
+        }
+        let output = fixture
+            .table
+            .file_io()
+            .new_output(snapshot.manifest_list())
+            .unwrap()
+            .writer()
+            .await
+            .unwrap();
+        let mut writer = if fixture.table.metadata().format_version() == FormatVersion::V3 {
+            ManifestListWriter::v3(
+                output,
+                snapshot.snapshot_id(),
+                snapshot.parent_snapshot_id(),
+                snapshot.sequence_number(),
+                Some(42),
+            )
+        } else {
+            ManifestListWriter::v2(
+                output,
+                snapshot.snapshot_id(),
+                snapshot.parent_snapshot_id(),
+                snapshot.sequence_number(),
+            )
+        };
+        writer.add_manifests(manifests.into_iter()).unwrap();
+        writer.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "exports shared fixtures for dev/scan-reports/run.sh"]
+    async fn export_java_differential_fixtures() {
+        let output = std::path::PathBuf::from(std::env::var("SCAN_REPORT_OUTPUT").unwrap());
+        fs::create_dir_all(&output).unwrap();
+        let mut cases = vec![];
+        for name in [
+            "unfiltered",
+            "dead-only",
+            "manifest-pruned",
+            "file-pruned",
+            "all-pruned",
+            "projection",
+            "current-schema",
+            "time-travel",
+            "unmatched-delete",
+            "shared-position",
+            "path-position",
+            "equality",
+            "dv",
+        ] {
+            let mut fixture = if matches!(name, "current-schema" | "time-travel") {
+                TableTestFixture::new_with_column_added_after_last_write()
+            } else {
+                TableTestFixture::new()
+            };
+            match name {
+                "shared-position" => fixture.setup_deadlock_manifests().await,
+                "path-position" => fixture.setup_multi_row_group_manifest(&[1, 2]).await,
+                "equality" => fixture.setup_promoted_partition_with_eq_delete(false).await,
+                "dv" => fixture.setup_promoted_partition_with_dv().await,
+                "unmatched-delete" => {
+                    fixture.setup_manifest_files().await;
+                    add_unmatched_delete(&fixture).await;
+                }
+                _ => fixture.setup_manifest_files().await,
+            }
+            materialize_fixture(&fixture, name == "dead-only").await;
+            fixture.table = Table::builder()
+                .metadata(fixture.table.metadata().clone())
+                .identifier(fixture.table.identifier().clone())
+                .file_io(fixture.table.file_io().clone())
+                .runtime(test_runtime())
+                .build()
+                .unwrap();
+            let threshold = match name {
+                "manifest-pruned" => Some(50),
+                "file-pruned" => Some(200),
+                _ => None,
+            };
+            let mut builder = fixture.table.scan();
+            if name == "time-travel" {
+                builder = builder.snapshot_id(
+                    fixture
+                        .table
+                        .metadata()
+                        .current_snapshot()
+                        .unwrap()
+                        .snapshot_id(),
+                );
+            }
+            if let Some(limit) = threshold {
+                builder = builder.with_filter(Reference::new("x").less_than(Datum::long(limit)));
+            }
+            if name == "all-pruned" {
+                builder = builder.with_filter(Reference::new("x").equal_to(Datum::long(200)));
+            }
+            if name == "projection" {
+                builder = builder.select(["X", "Z"]).with_case_sensitive(false);
+            }
+            let scan = builder.build().unwrap();
+            let reporter = Arc::new(RecordingMetricsReporter::default());
+            let tasks = consume_plan(&scan, &reporter).await;
+            let report = reporter.take_report();
+            let metadata = output.join(format!("{name}.metadata.json"));
+            fs::write(
+                &metadata,
+                serde_json::to_vec_pretty(fixture.table.metadata()).unwrap(),
+            )
+            .unwrap();
+            let plans: Vec<_> = tasks.iter().map(|task| json!({
+                "path": task.data_file_path(), "size": task.file_size_in_bytes(),
+                "deletes": task.deletes().iter().map(|d| json!({"path": d.file_path(), "size": d.file_size_in_bytes(), "content_size": d.content_size_in_bytes(), "content_offset": d.content_offset(), "content": match d.file_type() { DataContentType::Data => 0, DataContentType::PositionDeletes => 1, DataContentType::EqualityDeletes => 2 }})).collect::<Vec<_>>()
+            })).collect();
+            cases.push(json!({"fixture": name, "metadata": metadata, "threshold": threshold, "report": report, "plans": plans}));
+        }
+        fs::write(
+            output.join("rust.json"),
+            serde_json::to_vec_pretty(&cases).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "reproducible collection overhead measurement"]
+    async fn benchmark_report_collection() {
+        let mut fixture = TableTestFixture::new();
+        fixture.setup_deadlock_manifests().await;
+        let scan = fixture.table.scan().build().unwrap();
+        for _ in 0..20 {
+            scan.plan_files()
+                .await
+                .unwrap()
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap();
+        }
+        let mut samples = [vec![], vec![]];
+        for round in 0..20 {
+            for offset in 0..2 {
+                let enabled = (round + offset) % 2;
+                let start = std::time::Instant::now();
+                for _ in 0..100 {
+                    let reporter = (enabled == 1).then(|| {
+                        Arc::new(super::report::LoggingMetricsReporter) as Arc<dyn MetricsReporter>
+                    });
+                    scan.plan_data_files(reporter, |ctx| ctx.into_file_scan_task())
+                        .await
+                        .unwrap()
+                        .try_collect::<Vec<_>>()
+                        .await
+                        .unwrap();
+                }
+                samples[enabled].push(start.elapsed().as_nanos() / 100);
+            }
+        }
+        for sample in &mut samples {
+            sample.sort();
+        }
+        println!(
+            "{}",
+            json!({"benchmark": "10 files, 1 shared delete; warm cache; alternating 20 batches of 100", "disabled_median_ns": samples[0][10], "enabled_median_ns": samples[1][10], "samples_ns": samples})
+        );
     }
 }
