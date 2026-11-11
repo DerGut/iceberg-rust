@@ -48,12 +48,11 @@ class TestRustScanReports {
       try (HadoopFileIO io = new HadoopFileIO()) {
         Table table = new BaseTable(
             new StaticTableOperations(fixture.get("metadata").asText(), io),
-            fixture.get("report").get("table_name").asText(),
+            fixture.get("table_ident").asText(),
             report -> reports.add((ScanReport) report));
         TableScan scan = table.newScan();
         if (name.equals("time-travel")) {
-          scan = scan.useSnapshot(table.currentSnapshot().snapshotId())
-              .project(table.schemas().get(table.currentSnapshot().schemaId()));
+          scan = scan.useSnapshot(table.currentSnapshot().snapshotId());
         }
         if (!fixture.get("threshold").isNull()) {
           scan = scan.filter(Expressions.lessThan(fixture.get("filter_column").asText(), fixture.get("threshold").asLong()));

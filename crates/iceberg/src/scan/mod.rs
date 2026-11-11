@@ -5394,6 +5394,7 @@ mod tests {
             });
         }
     }
+
     async fn add_position_delete(fixture: &TableTestFixture, referenced: &str, partition: i64) {
         use crate::spec::{
             DataContentType, DataFileBuilder, DataFileFormat, Literal, ManifestEntry,
@@ -5855,7 +5856,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "exports shared fixtures for dev/scan-reports/run.sh"]
-    async fn export_java_differential_fixtures() {
+    async fn test_export_java_differential_fixtures() {
         let output = std::path::PathBuf::from(std::env::var("SCAN_REPORT_OUTPUT").unwrap());
         fs::create_dir_all(&output).unwrap();
         let mut cases = vec![];
@@ -5988,54 +5989,12 @@ mod tests {
                 "path": task.data_file_path(), "size": task.file_size_in_bytes(),
                 "deletes": task.deletes().iter().map(|d| json!({"path": d.file_path(), "size": d.file_size_in_bytes(), "content_size": d.content_size_in_bytes(), "content_offset": d.content_offset(), "content": match d.file_type() { DataContentType::Data => 0, DataContentType::PositionDeletes => 1, DataContentType::EqualityDeletes => 2 }})).collect::<Vec<_>>()
             })).collect();
-            cases.push(json!({"fixture": name, "metadata": metadata, "threshold": threshold, "filter_column": filter_column, "report": report, "plans": plans}));
+            cases.push(json!({"fixture": name, "metadata": metadata, "table_ident": fixture.table.identifier().to_string(), "threshold": threshold, "filter_column": filter_column, "report": report, "plans": plans}));
         }
         fs::write(
             output.join("rust.json"),
             serde_json::to_vec_pretty(&cases).unwrap(),
         )
         .unwrap();
-    }
-
-    #[tokio::test]
-    #[ignore = "reproducible collection overhead measurement"]
-    async fn benchmark_report_collection() {
-        let mut fixture = TableTestFixture::new();
-        fixture.setup_deadlock_manifests().await;
-        let scan = fixture.table.scan().build().unwrap();
-        for _ in 0..20 {
-            scan.plan_files()
-                .await
-                .unwrap()
-                .try_collect::<Vec<_>>()
-                .await
-                .unwrap();
-        }
-        let mut samples = [vec![], vec![]];
-        for round in 0..20 {
-            for offset in 0..2 {
-                let enabled = (round + offset) % 2;
-                let start = std::time::Instant::now();
-                for _ in 0..100 {
-                    let reporter = (enabled == 1).then(|| {
-                        Arc::new(super::report::LoggingMetricsReporter) as Arc<dyn MetricsReporter>
-                    });
-                    scan.plan_data_files(reporter, |ctx| ctx.into_file_scan_task())
-                        .await
-                        .unwrap()
-                        .try_collect::<Vec<_>>()
-                        .await
-                        .unwrap();
-                }
-                samples[enabled].push(start.elapsed().as_nanos() / 100);
-            }
-        }
-        for sample in &mut samples {
-            sample.sort();
-        }
-        println!(
-            "{}",
-            json!({"benchmark": "10 files, 1 shared delete; warm cache; alternating 20 batches of 100", "disabled_median_ns": samples[0][10], "enabled_median_ns": samples[1][10], "samples_ns": samples})
-        );
     }
 }

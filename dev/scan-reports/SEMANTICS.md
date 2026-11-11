@@ -52,15 +52,39 @@ Java SnapshotScan.planFiles uses CloseableIterable.whenComplete, whose close run
 the callback in finally, including partial consumption and close failure. Its
 ScanMetrics belongs to the scan object, so reusing that object can accumulate.
 Rust intentionally reports only successful, fully consumed invocations and does
-not reproduce either behavior. Worker handles are retained and joined; this is a
-localized ownership change, not a replacement planner architecture.
+not reproduce either behavior. A LIMIT query that drops planning before EOF
+therefore has no completed report; a query whose planning already reached EOF
+still does. This deliberately sacrifices partial-scan visibility to keep an
+unqualified report trustworthy. Drop can request cancellation but cannot await
+worker shutdown. Partial/error reports would need explicit outcome semantics and
+an appropriate cancellation/completion coordinator, not a snapshot of racing counters.
+
+## Planner behavior changes
+
+The lifecycle commit joins the delete-index worker and propagates its result even
+when no data task asks for deletes. Joining is required to establish completion;
+propagating the inner error is a separate contract choice. Invalid duplicate DVs
+now fail a scan whose data files are all pruned. Java ManifestGroup.plan
+builds DeleteFileIndex before creating data tasks. Preserving Rust's previous
+empty success is possible, but would require suppressing the report or defining
+an unused failed-index outcome. The chosen contract requires all planning stages
+to succeed. Tests exercise this error for normal and COW plans, and report suppression.
+
+The counting commit skips manifests whose manifest-list counts prove there are
+no added or existing files. This matches Java's manifest selection and skipped
+manifest counters. It is not required for completion safety. It avoids reading
+those files in both normal and shared COW planning; an absent or corrupt dead-only
+manifest is no longer opened. It relies on valid manifest-list live-entry counts.
+A regression deletes the dead-only manifest and verifies both planners still
+produce no tasks, with a skipped-manifest count in the scan report.
 
 ## Projection and compatibility
 
 Resolve report names from selected field IDs in the actual scan schema, not the
 requested spellings. Current scans use current schema; explicit time travel uses
-snapshot schema. Java useSnapshot retains the current schema unless explicitly
-projected: the harness must project the snapshot schema to match Rust time travel.
+snapshot schema. At the pinned Java revision, DataTableScan.useSnapshotSchema()
+returns true, and SnapshotScan.useSnapshot() selects SnapshotUtil.schemaFor for
+that snapshot. The harness therefore calls useSnapshot() without project().
 Java reports sanitized filters; Rust stores the predicate privately and logs only
 whether a filter is present, without literal values. Nested projection needs special care:
 Java TypeUtil.getProjectedIds includes struct IDs and their selected descendants.
@@ -74,7 +98,7 @@ Java also filters delete entries using row metrics and sequence-number threshold
 Rust's current delete entry planner filters partitions only. The writer-equality-pruning
 fixture measures this difference: Java skips eq-99 using y < 20, while Rust indexes
 and attaches it. The unfiltered writer-equality-association fixture separately
-exercises DeleteFileIndex.canContainEqDeletes: Java uses data/delete bounds and
+exercises DeleteFileIndex.canContainEqDeletesForFile: Java uses data/delete bounds and
 attaches one delete total; Rust uses partition/sequence checks and attaches four.
 Their indexed counts both equal two. Counter differences follow actual plans;
 no zero, missing value, or normalization hides the difference. These existing

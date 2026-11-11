@@ -22,6 +22,8 @@ import sys
 root = pathlib.Path(sys.argv[1])
 rust = json.loads((root / "rust.json").read_text())
 java = {case["fixture"]: case for case in json.loads((root / "java.json").read_text())}
+assert len({case["fixture"] for case in rust}) == len(rust)
+assert {case["fixture"] for case in rust} == set(java)
 results = []
 for case in rust:
     name = case["fixture"]
@@ -40,7 +42,7 @@ for case in rust:
         if name == "writer-equality-association" and metric in {
             "result_delete_files", "total_delete_file_size_in_bytes", "plans"
         }:
-            explanation = ("Both index two equality deletes. Java DeleteFileIndex.canContainEqDeletes "
+            explanation = ("Both index two equality deletes. Java DeleteFileIndex.canContainEqDeletesForFile "
                            "uses bounds to attach eq-10 only to written-10 and eq-99 to neither file. "
                            "Rust uses partition and sequence checks, attaching both deletes to both files. "
                            "The report counts actual attachments (Java 1, Rust 4).")
@@ -73,28 +75,23 @@ for case in rust:
             assert binary["op"] in ("LessThan", "Eq")
             raw = {"type": {"LessThan": "lt", "Eq": "eq"}[binary["op"]], "term": binary["term"]["name"], "value": binary["literal"]["literal"]}
         compare("raw_filter", other["raw_filter"], raw, "Compare actual unsanitized scan options")
-        sanitized = raw
-        if isinstance(raw, dict):
-            sanitized = dict(raw, value=f"({len(str(abs(raw['value'])))}-digit-int)")
-        compare("sanitized_filter", j["filter"], sanitized, "Java sanitizes integer literals; raw predicates are checked separately")
         for metric in sorted(set(r["metrics"]) | {k.replace("-", "_") for k in j["metrics"] if k != "total-planning-duration"}):
             jm = j["metrics"].get(metric.replace("_", "-"), {})
             compare(metric, jm.get("value", "ABSENT"), r["metrics"].get(metric, "ABSENT"),
                     "Measured counters must match; ABSENT is not zero")
-            compare(metric + ".unit", jm.get("unit", "ABSENT"),
-                    "bytes" if metric.endswith("in_bytes") else "count", "Counter units")
         duration = j["metrics"]["total-planning-duration"]
-        compare("duration.unit", duration["time-unit"], "nanoseconds", "Unit, not elapsed value")
-        compare("duration.count", duration["count"], 1, "One planning invocation")
-        assert duration["total-duration"] >= 0 and r["total_planning_duration"]["secs"] >= 0
+        assert duration["time-unit"] == "nanoseconds" and duration["count"] == 1
+        assert duration["total-duration"] >= 0
+        assert r["total_planning_duration"]["secs"] >= 0
+        assert 0 <= r["total_planning_duration"]["nanos"] < 1_000_000_000
 
         def plans(items):
             return sorted([dict(p, deletes=sorted(p["deletes"], key=lambda d: json.dumps(d, sort_keys=True))) for p in items], key=lambda p: p["path"])
 
         compare("plans", plans(other["plans"]), plans(case["plans"]), "Exact paths, sizes, delete content types and DV ranges; ordering only is normalized")
     results.append(dict(fixture=name, status="mismatch" if mismatches else "match", mismatches=mismatches))
-summary = dict(results=results, unsupported_report_fields=["Java environment/options metadata"],
-               duration_comparison="unit and invocation count checked; elapsed values intentionally not equal")
+summary = dict(results=results, unsupported_report_fields=["Java environment/options metadata", "Rust metric unit tags (not represented)", "Sanitized report filters (Rust stores the raw predicate)"],
+               duration_comparison="Java timer unit/count and Rust Duration representation checked independently; elapsed values intentionally not equal")
 (root / "comparison.json").write_text(json.dumps(summary, indent=2) + "\n")
 print(json.dumps(summary, indent=2))
 sys.exit(any(r["mismatches"] for r in results))

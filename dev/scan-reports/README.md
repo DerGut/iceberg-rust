@@ -13,8 +13,8 @@ test-only field on `TableScan`. Reporter configuration is not exposed publicly.
 
 Java: `4e61757dcf568051a13bb8d4c00ef57c9f248947`.
 Rust upstream baseline: `63d3d522c44aec588ebb7207834a37a141c3837a`.
-PR #1 has three commits on the parent branch: `a5dc8d131` (worker lifecycle),
-`fead59434` (counting), and `b5769a3d2` (reporting). The lifecycle commit includes
+PR #1 has three commits on the parent branch: `b7eb06095` (worker lifecycle),
+`4ad2e44bc` (counting), and `4bc990c5e` (reporting). The lifecycle commit includes
 controlled manifest-read failure and cancellation tests. The reporting commit
 checks that delayed I/O and partial consumption cannot produce a completed report.
 The [evidence manifest](evidence/manifest.json) pins the executed Rust revision,
@@ -27,7 +27,8 @@ Rust toolchain installed:
 bash dev/scan-reports/run.sh /tmp/iceberg-scan-reports
 ```
 
-The script records HEAD, the working-tree patch, and toolchain versions, downloads
+The script records HEAD, the pinned production ancestor, the working-tree patch,
+toolchain versions, and check commands/statuses/log hashes, downloads
 Java by commit, and uses its Gradle wrapper. The archive needs `version.txt`;
 Git-properties generation is disabled because archives have no `.git` directory.
 The version marker is build metadata, not a dependency resolution substitute.
@@ -69,11 +70,16 @@ manifest writers; this is not an append/row-delta transaction test. Older fixtur
 materialize missing files and physical sizes but retain synthetic statistics, so
 those cases establish planner agreement rather than row-level correctness.
 
-For time travel Java explicitly projects the snapshot schema to match Rust's
-existing behavior. For metadata columns Java uses an explicit projection schema:
+For time travel both implementations select the snapshot schema: Java's
+`DataTableScan.useSnapshotSchema()` enables this in `SnapshotScan.useSnapshot()`.
+The Java fixture calls `useSnapshot()` without an explicit projection.
+For metadata columns Java uses an explicit projection schema:
 its `select()` resolves only table columns. Both implementations use the same
 resolved names/IDs, source schema ID, snapshot, filter, and case sensitivity in
-that case. Neither adaptation discards a report mismatch.
+that case. This adaptation does not discard a report mismatch.
+Java receives its table name from the fixture identifier, independently of the
+Rust report. Negative controls corrupt the Rust report name, a counter, and the
+plan in turn and require the comparator to detect each change.
 
 Only these representation conversions are made:
 
@@ -81,15 +87,20 @@ Only these representation conversions are made:
 - Plan order, delete order, and paired projected IDs/names are sorted. Paths,
   sizes, delete content types, and DV offsets/sizes are compared exactly.
 - Rust predicate enums map to Java expression JSON for the fixture operators.
-  Raw Java scan filters are captured and compared exactly. Java's sanitized
-  report filters are checked separately against the expected digit-count mask.
+  Raw Java scan filters are captured and compared exactly with Rust report
+  predicates. Java's sanitized report filter is retained but not compared: Rust
+  stores a raw predicate and does not implement Java's sanitizer.
 - Retained evidence replaces each fixture's temporary table root with
   `<fixture-root>` and the metadata JSON path with `<metadata-file>`. Comparison itself uses exact absolute paths before this step.
-- Durations are not compared numerically: Java nanoseconds/count=1 and Rust
-  Duration are checked, and Rust regression tests exercise the EOF boundary.
+- Durations are not compared numerically. Java nanoseconds/count=1 and the
+  validity of Rust's serialized Duration (seconds/nanoseconds) are checked
+  independently; Rust regression tests exercise the EOF boundary.
 
 Absent metrics use an explicit `ABSENT` marker, never zero. Java environment/options
 metadata has no Rust counterpart in PR 1 and is listed as unsupported report data.
+Rust counters are untagged integers: there is no runtime unit field to compare.
+Units are source-audited in SEMANTICS.md, with byte/count values checked against
+shared physical-file plans; Python does not fabricate unit tags for Rust.
 
 ## Results and limits
 
@@ -131,9 +142,11 @@ machine-readable. Archive a run after comparison with:
 python3 dev/scan-reports/archive.py /tmp/iceberg-scan-reports /tmp/scan-evidence
 ```
 
-The optional `benchmark_report_collection` test and [historical samples](evidence/benchmark.json)
-retain their own revision pin. They compare reporting enabled/disabled on a tiny
-warm-cache plan, not competing collector designs. They are not a performance
-acceptance criterion. Per-worker local counters merged after joins are a plausible
-alternative to shared atomics if profiling demonstrates contention; no such
-contention or faster alternative has been established here.
+`archive.py` reads provenance and check results produced by `run.sh`; it requires
+no manual additions to the evidence manifest. The archived production revision is
+verified as an ancestor of the captured Rust revision. Re-running the archiver on
+the same run directory reproduces all retained evidence files.
+
+No performance claim is made. The old debug enabled/disabled timing and its test
+have been removed: they did not compare alternative implementations or exercise
+an installed tracing subscriber. Logging delivery overhead has not been measured.

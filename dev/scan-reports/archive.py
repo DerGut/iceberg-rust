@@ -48,6 +48,8 @@ for name, value in [("rust", rust), ("java", java), ("inputs", inventory)]:
 (out / "comparison.json").write_text(comparison)
 mismatched = [c["fixture"] for c in json.loads(comparison)["results"] if c["mismatches"]]
 manifest = {
+    "production_revision": (run / "production-revision.txt").read_text().strip(),
+    "checks": json.loads((run / "checks.json").read_text()),
     "rust_revision": (run / "rust-revision.txt").read_text().strip(),
     "rust_working_tree_patch": (run / "rust-working-tree.patch").read_text(),
     "java_revision": (run / "java-revision.txt").read_text().strip(),
