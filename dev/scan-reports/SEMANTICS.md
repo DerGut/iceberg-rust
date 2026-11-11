@@ -70,7 +70,7 @@ empty success is possible, but would require suppressing the report or defining
 an unused failed-index outcome. The chosen contract requires all planning stages
 to succeed. Tests exercise this error for normal and COW plans, and report suppression.
 
-The counting commit skips manifests whose manifest-list counts prove there are
+The planner prerequisite commit skips manifests whose manifest-list counts prove there are
 no added or existing files. This matches Java's manifest selection and skipped
 manifest counters. It is not required for completion safety. It avoids reading
 those files in both normal and shared COW planning; an absent or corrupt dead-only
