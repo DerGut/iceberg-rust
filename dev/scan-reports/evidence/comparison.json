@@ -190,14 +190,14 @@
           "metric": "result_delete_files",
           "java": 1,
           "rust": 4,
-          "explanation": "Both index two equality deletes. Java DeleteFileIndex.canContainEqDeletes uses bounds to attach eq-10 only to written-10 and eq-99 to neither file. Rust uses partition and sequence checks, attaching both deletes to both files. The report counts actual attachments (Java 1, Rust 4)."
+          "explanation": "Both index two equality deletes. Java DeleteFileIndex.canContainEqDeletesForFile uses bounds to attach eq-10 only to written-10 and eq-99 to neither file. Rust uses partition and sequence checks, attaching both deletes to both files. The report counts actual attachments (Java 1, Rust 4)."
         },
         {
           "fixture": "writer-equality-association",
           "metric": "total_delete_file_size_in_bytes",
           "java": 558,
           "rust": 2232,
-          "explanation": "Both index two equality deletes. Java DeleteFileIndex.canContainEqDeletes uses bounds to attach eq-10 only to written-10 and eq-99 to neither file. Rust uses partition and sequence checks, attaching both deletes to both files. The report counts actual attachments (Java 1, Rust 4)."
+          "explanation": "Both index two equality deletes. Java DeleteFileIndex.canContainEqDeletesForFile uses bounds to attach eq-10 only to written-10 and eq-99 to neither file. Rust uses partition and sequence checks, attaching both deletes to both files. The report counts actual attachments (Java 1, Rust 4)."
         },
         {
           "fixture": "writer-equality-association",
@@ -264,7 +264,7 @@
               "size": 1286
             }
           ],
-          "explanation": "Both index two equality deletes. Java DeleteFileIndex.canContainEqDeletes uses bounds to attach eq-10 only to written-10 and eq-99 to neither file. Rust uses partition and sequence checks, attaching both deletes to both files. The report counts actual attachments (Java 1, Rust 4)."
+          "explanation": "Both index two equality deletes. Java DeleteFileIndex.canContainEqDeletesForFile uses bounds to attach eq-10 only to written-10 and eq-99 to neither file. Rust uses partition and sequence checks, attaching both deletes to both files. The report counts actual attachments (Java 1, Rust 4)."
         }
       ]
     },
@@ -326,7 +326,9 @@
     }
   ],
   "unsupported_report_fields": [
-    "Java environment/options metadata"
+    "Java environment/options metadata",
+    "Rust metric unit tags (not represented)",
+    "Sanitized report filters (Rust stores the raw predicate)"
   ],
-  "duration_comparison": "unit and invocation count checked; elapsed values intentionally not equal"
+  "duration_comparison": "Java timer unit/count and Rust Duration representation checked independently; elapsed values intentionally not equal"
 }

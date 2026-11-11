@@ -1,5 +1,102 @@
 {
-  "rust_revision": "bc555d76ea0d2688424105b6cf39af792930d66b",
+  "production_revision": "4bc990c5e307b6d31483a93dea8920688c7ae7d4",
+  "checks": [
+    {
+      "name": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit_status": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "scan-tests",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "iceberg",
+        "--lib",
+        "--all-features",
+        "scan::"
+      ],
+      "exit_status": 0,
+      "log_sha256": "561a4cb3dbb3c67dcaf6b99c2aea3064f4de27bdc4c00cac7a92cd157fe689f9"
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "-p",
+        "iceberg",
+        "--all-targets",
+        "--all-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_status": 0,
+      "log_sha256": "5c84d2143817d23ddc65fe0fd1e3348cf2e70101da7796f0fca582dec5589f07"
+    },
+    {
+      "name": "rust-capture",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "iceberg",
+        "--lib",
+        "--no-default-features",
+        "scan::tests::test_export_java_differential_fixtures",
+        "--",
+        "--ignored",
+        "--exact"
+      ],
+      "exit_status": 0,
+      "log_sha256": "26a20f55f98c35a72db316e8112b0b8660efc215ec819fd19ca0ecf1e225cb2c"
+    },
+    {
+      "name": "java-capture",
+      "command": [
+        "./gradlew",
+        ":iceberg-core:test",
+        "--tests",
+        "org.apache.iceberg.TestRustScanReports",
+        "-x",
+        "generateGitProperties",
+        "--rerun-tasks",
+        "--console=plain"
+      ],
+      "exit_status": 0,
+      "log_sha256": "b487cffaaa56f8edfb58b634bf5e80f09ebd3b72a78d463a8cd11895bfd47ffd"
+    },
+    {
+      "name": "comparison",
+      "command": [
+        "python3",
+        "/Users/jannik.steinmann/go/src/github.com/DerGut/worktrees/iceberg-rust/scan-reports/iceberg-rust/dev/scan-reports/compare.py",
+        "/tmp/scan-review-final/results"
+      ],
+      "exit_status": 1,
+      "log_sha256": "6ba752c8d03c71194ef69d588ac0744d5f33fcf49e6af8eda0ac22bf6a7b8449"
+    },
+    {
+      "name": "comparator-controls",
+      "command": [
+        "python3",
+        "/Users/jannik.steinmann/go/src/github.com/DerGut/worktrees/iceberg-rust/scan-reports/iceberg-rust/dev/scan-reports/verify_comparison.py",
+        "/tmp/scan-review-final/results"
+      ],
+      "exit_status": 0,
+      "log_sha256": "0d16c604b4fc0fe8180e38d59b47b384ce6d54f69aabeba34f123a5b99ccc46a"
+    }
+  ],
+  "rust_revision": "4c22f9d7aa2e87f75f61960c3a9dc78d12697f83",
   "rust_working_tree_patch": "",
   "java_revision": "4e61757dcf568051a13bb8d4c00ef57c9f248947",
   "runtime": [
@@ -17,7 +114,7 @@
     "Darwin MacBook-Pro-3.local 25.6.0 Darwin Kernel Version 25.6.0: Mon Oct 12 00:39:48 PDT 2026; root:xnu-12377.161.15.701.48~2/RELEASE_ARM64_T6041 arm64"
   ],
   "gradle": "8.14.6 (pinned source wrapper)",
-  "command": "bash dev/scan-reports/run.sh /tmp/scan-expanded-final",
+  "command": "bash dev/scan-reports/run.sh /tmp/scan-review-final",
   "comparison_exit_status": 1,
   "mismatched_fixtures": [
     "projection",
@@ -25,15 +122,5 @@
     "writer-equality-association",
     "nested-all"
   ],
-  "explanation": "All observed differences are retained; see comparison.json and SEMANTICS.md",
-  "production_revision": "b5769a3d20fdccd4fa68f9b8bcb6fd7abdd65e6a",
-  "lifecycle_revision": "a5dc8d131287cfe8093e66e59a5cacd9a5ea0283",
-  "checks": {
-    "production_scan_tests": "103 passed (scan::tests, all features)",
-    "validation_scan_tests": "121 passed, 2 ignored (scan::, all features); exporter run separately",
-    "clippy": "all targets, all features, -D warnings passed on both branches",
-    "format": "cargo fmt --all -- --check passed on both branches",
-    "public_api": "make generate-public-api passed on production with no diff",
-    "lifecycle_commit": "delayed manifest failure and in-flight read cancellation tests passed independently"
-  }
+  "explanation": "All observed differences are retained; see comparison.json and SEMANTICS.md"
 }
