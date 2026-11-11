@@ -16,7 +16,7 @@
 set -euo pipefail
 repo=$(git rev-parse --show-toplevel)
 java_revision=4e61757dcf568051a13bb8d4c00ef57c9f248947
-production_revision=fce7bfe501fd1445164f04e339ca2edc44d4e465
+production_revision=8d987e97dca956330d1dbd25ad5aa235877a2e86
 work=${1:?Usage: bash dev/scan-reports/run.sh ABSOLUTE_OUTPUT_DIRECTORY}
 mkdir -p "$work/java"
 export SCAN_REPORT_OUTPUT="$work/results"
@@ -24,7 +24,7 @@ mkdir -p "$SCAN_REPORT_OUTPUT"
 git merge-base --is-ancestor "$production_revision" HEAD
 printf '%s\n' "$production_revision" > "$work/production-revision.txt"
 git rev-parse HEAD > "$work/rust-revision.txt"
-git diff --binary HEAD > "$work/rust-working-tree.patch"
+git diff --no-ext-diff --binary HEAD > "$work/rust-working-tree.patch"
 (rustc -Vv; cargo -V; java -version; uname -a) > "$work/runtime.txt" 2>&1
 printf '%s\n' "$java_revision" > "$work/java-revision.txt"
 if [[ ! -f "$work/java/gradlew" ]]; then

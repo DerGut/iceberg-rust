@@ -14,10 +14,11 @@ test-only field on `TableScan`. Reporter configuration is not exposed publicly.
 Java: `4e61757dcf568051a13bb8d4c00ef57c9f248947`.
 Rust upstream baseline: `63d3d522c44aec588ebb7207834a37a141c3837a`.
 PR #1 has three commits on the parent branch: `e5fb2cec6` (planner behavior),
-`1883bfef7` (counting), and `fce7bfe50` (reporting). The planner prerequisite commit includes controlled manifest-read failure and
+`1883bfef7` (counting), and `8d987e97d` (reporting). The planner prerequisite commit includes controlled manifest-read failure and
 cancellation tests, unused delete-index failures, and dead-only manifest skipping
 for both scan and COW planning. The reporting commit
-checks completed/cancelled/failed outcomes and waits for contributing workers to stop.
+delivers reports after contributing workers stop, including partial and failed planning.
+Reports have no outcome tag and do not certify successful or exhaustive planning.
 The [evidence manifest](evidence/manifest.json) pins the executed Rust revision,
 Java revision, runtime versions, and command.
 
@@ -79,11 +80,14 @@ its `select()` resolves only table columns. Both implementations use the same
 resolved names/IDs, source schema ID, snapshot, filter, and case sensitivity in
 that case. This adaptation does not discard a report mismatch.
 Java receives its table name from the fixture identifier, independently of the
-Rust report. Negative controls corrupt the Rust report name, a counter, and the
-plan in turn and require the comparator to detect each change.
+Rust report. Negative controls independently corrupt each component of the Rust
+report identifier, a counter, and the plan and require detection of each change.
 
 Only these representation conversions are made:
 
+- Rust report `TableIdent` is formatted with dot-joined namespace components and
+  a dot before the table name, matching its `Display` implementation, for comparison
+  with Java's table-name string. Namespace components remain typed in the raw capture.
 - Snake-case Rust field names map to Java's hyphenated metric names.
 - Plan order, delete order, and paired projected IDs/names are sorted. Paths,
   sizes, delete content types, and DV offsets/sizes are compared exactly.
@@ -129,7 +133,7 @@ reused-scan accumulation remains source-audited; Rust deliberately keeps each in
 
 Rust tests use a manifest reader controlled by explicit notifications to block,
 fail, or cancel I/O at concurrency one. They observe the blocked read being dropped,
-bound all waits, and check completed/cancelled/failed outcomes after contributors stop.
+bound all waits, and check exactly one report after contributors stop.
 A separate test blocks a running worker across cancellation and verifies that its
 last counter update precedes delivery. Repeated/concurrent planning, no-snapshot
 tables, and cancellation during manifest-list loading also have regression coverage. These checks do not establish cancellation latency
@@ -147,16 +151,16 @@ its pinned provenance remain available in that earlier evidence.
 - `close-after-one`: consume one of two tasks, then close/drop. Both emit reports.
   Rust may have already planned buffered work; every observed counter difference
   is retained with that explanation. This is not an exact partial-counter parity claim.
-- `close-after-last`: consume both tasks and close/drop without polling EOF. Rust
-  reports `cancelled` even if workers already finished; Java has no outcome tag.
+- `close-after-last`: consume both tasks and close/drop without polling EOF.
+  Both emit reports; neither labels the reason for termination.
 - `manifest-read-failure`: both read the same metadata/list referencing an
   intentionally removed manifest. Both fail iteration and deliver a report;
-  Rust tags it `failed`. The removed path is recorded in the fixture capture.
+  the removed path and iteration error are recorded in the fixture capture.
 
 All three use the same input files for both implementations. Partial counters
 are scheduling-dependent; consumed plans and every counter are still compared
-exactly, with differences recorded rather than discarded. Outcome is independently
-checked against the requested Rust operation and marked absent in Java.
+exactly, with differences recorded rather than discarded. Neither report has an
+outcome field; iteration errors and requested consumption are captured independently.
 
 Retained [comparison](evidence/comparison.json), [Rust captures](evidence/rust.json),
 [Java captures](evidence/java.json), and [input hashes](evidence/inputs.json) are

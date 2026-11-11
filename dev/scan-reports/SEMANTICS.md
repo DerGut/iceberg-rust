@@ -34,17 +34,18 @@ scanned means selected and visited, not an object-store cache miss.
 
 ## Lifecycle contract
 
-Each plan_files invocation owns fresh counters and produces at most one immutable
-report. Its explicit outcome is `completed` after successful EOF, `cancelled` on
-early drop (including after the last task without polling EOF) or runtime task
-cancellation, and `failed` on a planning error or panic. Known failures take
-precedence over cancellation. The planner cannot distinguish LIMIT, caller
-cancellation, and abandonment, so it does not claim an `early-limit` reason.
+Each snapshot-bearing plan_files invocation owns fresh counters and produces at most
+one immutable report with a typed TableIdent. Reports describe work performed, with
+no success, failure, or cancellation tag: they do not certify exhaustive or
+successful planning. Successful EOF, early drop (including LIMIT and dropping
+after the last task without polling EOF), planning errors, and unwinding panics
+release the reporting state. An unpolled planning future has not started and does
+not report. Outcome classification is deferred to a possible follow-up.
 
 Successful EOF still waits for manifest, entry, and delete-index joins. Every
-spawned future, including nested entry workers and the index, holds an operation
-guard constructed before spawn. After drop or failure, abort-on-drop handles
-request cancellation; finalization waits for the last guard to be released.
+spawned future, including nested entry workers and the index, holds a reference
+to the operation state from before spawn. After drop or failure, abort-on-drop
+handles request cancellation; finalization waits for the last state reference to be released.
 The Arc release/acquire barrier synchronizes all contributing futures before
 reading final counters, even when a worker is still in a synchronous poll after
 cancellation. No new coordinator, accumulator task, or per-file channel is used.
@@ -61,7 +62,7 @@ consumer backpressure, and worker teardown, but excludes reporter delivery.
 A blocking tracing subscriber can delay the releasing thread. There is no new
 report queue, async metrics send, or reporting error in the planner.
 
-No snapshot: no report. Existing zero-result snapshot: one completed report.
+No snapshot: no report. Existing zero-result snapshot: one report after termination.
 Repeated/concurrent calls have independent accumulators. COW planning does not
 collect scan reports. Partial counters describe actual planning work, including
 buffered tasks the caller did not consume. Scanned manifests count processing
@@ -71,19 +72,19 @@ in Rust; Java can evaluate them lazily.
 
 Java SnapshotScan.planFiles uses CloseableIterable.whenComplete: close invokes
 the report callback even after partial iteration or an iteration/close error.
-Rust now also exposes these terminated operations, but adds an outcome that Java
-reports lack and waits for contributors to stop. Java ParallelIterable.close
+Rust also exposes these terminated operations, and waits for contributors to stop.
+Neither implementation tags its report with an outcome. Java ParallelIterable.close
 requests cancellation without the same join barrier; scheduling and read-ahead
 can produce different partial counters. Do not infer numeric partial-report
 parity from common visibility. Errors before Java returns its iterable may
-produce no report, while Rust reports a failure once a snapshot-bearing planning
-invocation has begun. Java's metrics belong to the scan object and can accumulate
+produce no report, while Rust delivers a report when setup fails after the
+snapshot-bearing invocation has created its reporting state. Java's metrics belong to the scan object and can accumulate
 on reuse; Rust's reports remain operation-scoped.
 
 The differential harness executes close after one of two tasks, close after the
 last task without requesting EOF, and a missing-manifest iteration failure.
-It compares the observed counters exactly and retains read-ahead differences,
-while checking Rust's outcome separately because Java has no corresponding tag.
+It compares the observed counters exactly and retains read-ahead differences.
+Iteration errors and requested consumption are captured independently of reports.
 The original 22 fixtures still fully consume planning without reading rows.
 
 ## Planner behavior changes
@@ -93,9 +94,9 @@ when no data task asks for deletes. Joining is required to establish completion;
 propagating the inner error is a separate contract choice. Invalid duplicate DVs
 now fail a scan whose data files are all pruned. Java ManifestGroup.plan
 builds DeleteFileIndex before creating data tasks. Preserving Rust's previous
-empty success is possible, but would require suppressing the report or defining
-an unused failed-index outcome. The chosen contract requires all planning stages
-to succeed. Tests exercise this error for normal and COW plans, and a failed report.
+empty success is possible and independent of reporting. The chosen planner contract
+requires all planning stages to succeed. Tests exercise this error for normal and
+COW plans, and report delivery after the error.
 
 The planner prerequisite commit skips manifests whose manifest-list counts prove there are
 no added or existing files. This matches Java's manifest selection and skipped
