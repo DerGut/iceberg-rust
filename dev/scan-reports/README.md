@@ -14,7 +14,7 @@ test-only field on `TableScan`. Reporter configuration is not exposed publicly.
 Java: `4e61757dcf568051a13bb8d4c00ef57c9f248947`.
 Rust upstream baseline: `63d3d522c44aec588ebb7207834a37a141c3837a`.
 PR #1 has three commits on the parent branch: `e5fb2cec6` (planner behavior),
-`1883bfef7` (counting), and `6b26a0f46` (reporting). The planner prerequisite commit includes controlled manifest-read failure and
+`1883bfef7` (counting), and `fce7bfe50` (reporting). The planner prerequisite commit includes controlled manifest-read failure and
 cancellation tests, unused delete-index failures, and dead-only manifest skipping
 for both scan and COW planning. The reporting commit
 checks completed/cancelled/failed outcomes and waits for contributing workers to stop.
