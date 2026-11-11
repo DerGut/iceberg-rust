@@ -65,8 +65,9 @@ No snapshot: no report. Existing zero-result snapshot: one completed report.
 Repeated/concurrent calls have independent accumulators. COW planning does not
 collect scan reports. Partial counters describe actual planning work, including
 buffered tasks the caller did not consume. Scanned manifests count processing
-starts, not all selected/queued manifests. Manifest selection and its skipped
-counts are evaluated eagerly in Rust; Java can evaluate them lazily.
+starts, not all selected/queued manifests. Manifest totals are recorded from the full list before evaluating selection,
+even if selection fails. Selection and its skipped counts are evaluated eagerly
+in Rust; Java can evaluate them lazily.
 
 Java SnapshotScan.planFiles uses CloseableIterable.whenComplete: close invokes
 the report callback even after partial iteration or an iteration/close error.
