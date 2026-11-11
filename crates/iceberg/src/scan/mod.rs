@@ -5883,6 +5883,9 @@ mod tests {
             "writer-equality-association",
             "nested-all",
             "metadata-projection",
+            "close-after-one",
+            "close-after-last",
+            "manifest-read-failure",
         ] {
             let mut fixture = if matches!(name, "current-schema" | "time-travel") {
                 TableTestFixture::new_with_column_added_after_last_write()
@@ -5946,7 +5949,27 @@ mod tests {
             } else {
                 "x"
             };
-            let mut builder = fixture.table.scan();
+            let missing_manifest = if name == "manifest-read-failure" {
+                let scan = fixture.table.scan().build().unwrap();
+                let list = scan
+                    .plan_context
+                    .as_ref()
+                    .unwrap()
+                    .get_manifest_list()
+                    .await
+                    .unwrap();
+                let path = list.entries()[0].manifest_path.clone();
+                fixture.table.file_io().delete(&path).await.unwrap();
+                Some(path)
+            } else {
+                None
+            };
+            let consume = match name {
+                "close-after-one" => Some(1),
+                "close-after-last" => Some(2),
+                _ => None,
+            };
+            let mut builder = fixture.table.scan().with_concurrency_limit(1);
             if name == "time-travel" {
                 builder = builder.snapshot_id(
                     fixture
@@ -5977,8 +6000,39 @@ mod tests {
             }
             let scan = builder.build().unwrap();
             let reporter = Arc::new(RecordingMetricsReporter::default());
-            let tasks = consume_plan(&scan, &reporter).await;
-            let report = reporter.take_report();
+            let (tasks, planning_error) = if let Some(take) = consume {
+                let mut stream = scan
+                    .plan_files_with_reporter(reporter.clone())
+                    .await
+                    .unwrap();
+                let mut tasks = vec![];
+                for _ in 0..take {
+                    tasks.push(
+                        tokio::time::timeout(Duration::from_secs(10), stream.next())
+                            .await
+                            .unwrap()
+                            .unwrap()
+                            .unwrap(),
+                    );
+                }
+                drop(stream);
+                (tasks, None)
+            } else if missing_manifest.is_some() {
+                let result = tokio::time::timeout(Duration::from_secs(10), async {
+                    scan.plan_files_with_reporter(reporter.clone())
+                        .await
+                        .unwrap()
+                        .try_collect::<Vec<_>>()
+                        .await
+                })
+                .await
+                .unwrap();
+                (vec![], Some(result.unwrap_err().to_string()))
+            } else {
+                (consume_plan(&scan, &reporter).await, None)
+            };
+            let report = reporter.wait_report().await;
+            assert!(reporter.take_reports().is_empty());
             let metadata = output.join(format!("{name}.metadata.json"));
             fs::write(
                 &metadata,
@@ -5989,7 +6043,7 @@ mod tests {
                 "path": task.data_file_path(), "size": task.file_size_in_bytes(),
                 "deletes": task.deletes().iter().map(|d| json!({"path": d.file_path(), "size": d.file_size_in_bytes(), "content_size": d.content_size_in_bytes(), "content_offset": d.content_offset(), "content": match d.file_type() { DataContentType::Data => 0, DataContentType::PositionDeletes => 1, DataContentType::EqualityDeletes => 2 }})).collect::<Vec<_>>()
             })).collect();
-            cases.push(json!({"fixture": name, "metadata": metadata, "table_ident": fixture.table.identifier().to_string(), "threshold": threshold, "filter_column": filter_column, "report": report, "plans": plans}));
+            cases.push(json!({"fixture": name, "metadata": metadata, "table_ident": fixture.table.identifier().to_string(), "threshold": threshold, "filter_column": filter_column, "consume": consume, "missing_manifest": missing_manifest, "planning_error": planning_error, "report": report, "plans": plans}));
         }
         fs::write(
             output.join("rust.json"),

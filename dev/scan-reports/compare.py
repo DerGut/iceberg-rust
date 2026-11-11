@@ -50,16 +50,24 @@ for case in rust:
             explanation = ("Java TypeUtil.getProjectedIds includes the selected struct and its child ID; "
                            "Rust reports the resolved top-level task projection. Both plan the whole struct. "
                            "Nested report representation remains a contract decision for review.")
+        if name.startswith("close-") and metric not in {"table_name", "snapshot_id", "schema_id", "projection", "raw_filter", "plans"}:
+            explanation = ("Close-time counters include work ahead of consumption. Rust's concurrent entry workers "
+                           "can plan buffered tasks that Java's single-manifest iterator has not visited. "
+                           "Both reports are partial; this observed difference is retained, not normalized.")
         if expected != actual:
             mismatches.append(dict(fixture=name, metric=metric, java=expected,
                                    rust=actual, explanation=explanation))
 
     r = case["report"]
     j = other.get("report", {})
+    expected_outcome = "cancelled" if name.startswith("close-") else "failed" if name == "manifest-read-failure" else "completed"
+    assert r["outcome"] == expected_outcome, (name, "outcome", r["outcome"], expected_outcome)
+    assert bool(case.get("planning_error")) == (name == "manifest-read-failure")
     if "error" in other:
         mismatches.append(dict(fixture=name, metric="planning", java=other["error"],
                                rust="success", explanation="Java planning failed"))
     else:
+        compare("planning_failed", bool(other.get("planning_error")), bool(case.get("planning_error")), "Both planners must fail the deliberately missing manifest")
         for field in ["table_name", "snapshot_id", "schema_id"]:
             compare(field, j[field.replace("_", "-")], r[field], ("Java TypeUtil.project constructs a partial schema with default ID 0; Rust intentionally retains the source schema ID" if field == "schema_id" and name == "projection" else "Report identity must agree"))
         compare("projection", sorted(zip(j["projected-field-ids"], j["projected-field-names"])),
@@ -89,8 +97,8 @@ for case in rust:
             return sorted([dict(p, deletes=sorted(p["deletes"], key=lambda d: json.dumps(d, sort_keys=True))) for p in items], key=lambda p: p["path"])
 
         compare("plans", plans(other["plans"]), plans(case["plans"]), "Exact paths, sizes, delete content types and DV ranges; ordering only is normalized")
-    results.append(dict(fixture=name, status="mismatch" if mismatches else "match", mismatches=mismatches))
-summary = dict(results=results, unsupported_report_fields=["Java environment/options metadata", "Rust metric unit tags (not represented)", "Sanitized report filters (Rust stores the raw predicate)"],
+    results.append(dict(fixture=name, status="mismatch" if mismatches else "match", rust_outcome=r["outcome"], java_outcome="ABSENT", mismatches=mismatches))
+summary = dict(results=results, unsupported_report_fields=["Outcome (Rust validates its lifecycle tag; Java reports have no outcome field)", "Java environment/options metadata", "Rust metric unit tags (not represented)", "Sanitized report filters (Rust stores the raw predicate)"],
                duration_comparison="Java timer unit/count and Rust Duration representation checked independently; elapsed values intentionally not equal")
 (root / "comparison.json").write_text(json.dumps(summary, indent=2) + "\n")
 print(json.dumps(summary, indent=2))

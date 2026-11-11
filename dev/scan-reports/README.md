@@ -95,7 +95,7 @@ Only these representation conversions are made:
   `<fixture-root>` and the metadata JSON path with `<metadata-file>`. Comparison itself uses exact absolute paths before this step.
 - Durations are not compared numerically. Java nanoseconds/count=1 and the
   validity of Rust's serialized Duration (seconds/nanoseconds) are checked
-  independently; Rust regression tests exercise the EOF boundary.
+  independently; Rust regression tests exercise successful EOF, errors, cancellation and worker teardown.
 
 Absent metrics use an explicit `ABSENT` marker, never zero. Java environment/options
 metadata has no Rust counterpart in PR 1 and is listed as unsupported report data.
@@ -105,8 +105,8 @@ shared physical-file plans; Python does not fabricate unit tags for Rust.
 
 ## Results and limits
 
-Eighteen fixtures match all compared fields, counters, and file/delete plans.
-Four fixtures retain differences:
+Of the original 22 fully consumed fixtures, eighteen match all compared fields,
+counters, and file/delete plans. Four fixtures retain differences:
 
 - `projection`: Java's partial schema has ID 0; Rust retains source schema ID 1.
 - `nested-all`: Java reports the struct and child field IDs; Rust reports the
@@ -125,15 +125,31 @@ See [SEMANTICS.md](SEMANTICS.md) for producers and lifecycle choices. No blanket
 Java-parity claim is made. Direct nested subfield selection is unsupported by
 Rust; nested list/map reports, delete sequence pruning, partition-spec evolution
 with mixed deletes, and v1 tables remain outside the executed matrix. Java's
-partial-close/reused-scan lifecycle differs deliberately; it is source-audited,
-not exercised by this full-consumption differential harness.
+reused-scan accumulation remains source-audited; Rust deliberately keeps each invocation independent.
 
 Rust tests use a manifest reader controlled by explicit notifications to block,
 fail, or cancel I/O at concurrency one. They observe the blocked read being dropped,
-bound all waits, and check completed reports after successful consumption only.
-Repeated/concurrent planning, no-snapshot tables, and early stream drop have
-separate regression coverage. These checks do not establish cancellation latency
+bound all waits, and check completed/cancelled/failed outcomes after contributors stop.
+A separate test blocks a running worker across cancellation and verifies that its
+last counter update precedes delivery. Repeated/concurrent planning, no-snapshot
+tables, and cancellation during manifest-list loading also have regression coverage. These checks do not establish cancellation latency
 for a network storage implementation.
+
+Three lifecycle fixtures supplement the full-consumption matrix:
+
+- `close-after-one`: consume one of two tasks, then close/drop. Both emit reports.
+  Rust may have already planned buffered work; every observed counter difference
+  is retained with that explanation. This is not an exact partial-counter parity claim.
+- `close-after-last`: consume both tasks and close/drop without polling EOF. Rust
+  reports `cancelled` even if workers already finished; Java has no outcome tag.
+- `manifest-read-failure`: both read the same metadata/list referencing an
+  intentionally removed manifest. Both fail iteration and deliver a report;
+  Rust tags it `failed`. The removed path is recorded in the fixture capture.
+
+All three use the same input files for both implementations. Partial counters
+are scheduling-dependent; consumed plans and every counter are still compared
+exactly, with differences recorded rather than discarded. Outcome is independently
+checked against the requested Rust operation and marked absent in Java.
 
 Retained [comparison](evidence/comparison.json), [Rust captures](evidence/rust.json),
 [Java captures](evidence/java.json), and [input hashes](evidence/inputs.json) are

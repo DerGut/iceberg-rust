@@ -29,6 +29,7 @@ import java.util.List;
 import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.CloseableIterable;
+import org.apache.iceberg.io.CloseableIterator;
 import org.apache.iceberg.metrics.ScanReport;
 import org.apache.iceberg.metrics.ScanReportParser;
 import org.junit.jupiter.api.Test;
@@ -67,8 +68,11 @@ class TestRustScanReports {
         }
         result.set("raw_filter", mapper.readTree(org.apache.iceberg.expressions.ExpressionParser.toJson(scan.filter())));
         ArrayNode plans = result.putArray("plans");
-        try (CloseableIterable<FileScanTask> tasks = scan.planFiles()) {
-          for (FileScanTask task : tasks) {
+        try (CloseableIterable<FileScanTask> tasks = scan.planFiles();
+             CloseableIterator<FileScanTask> iterator = tasks.iterator()) {
+          int consume = fixture.path("consume").isNull() ? -1 : fixture.get("consume").asInt();
+          while (consume < 0 ? iterator.hasNext() : plans.size() < consume) {
+            FileScanTask task = iterator.next();
             ObjectNode plan = plans.addObject();
             plan.put("path", task.file().location());
             plan.put("size", task.file().fileSizeInBytes());
@@ -84,6 +88,9 @@ class TestRustScanReports {
               else { d.put("content_offset", delete.contentOffset()); }
             }
           }
+        }
+        catch (Exception e) {
+          result.put("planning_error", e.toString());
         }
         if (reports.size() != 1) { throw new IllegalStateException("Reports: " + reports.size()); }
         result.set("report", mapper.readTree(ScanReportParser.toJson(reports.get(0))));

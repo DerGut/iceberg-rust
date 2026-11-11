@@ -1,4 +1,4 @@
-# Completed scan reports (PR 1)
+# Scan termination reports (PR 1)
 
 Reference: Java Iceberg `4e61757dcf568051a13bb8d4c00ef57c9f248947`;
 Rust baseline `63d3d522c44aec588ebb7207834a37a141c3837a` (upstream main checked).
@@ -13,9 +13,9 @@ https://github.com/apache/iceberg/tree/4e61757dcf568051a13bb8d4c00ef57c9f248947.
 |---|---|---|---|---|
 | total-data-manifests | count | DataTableScan.doPlanFiles: snapshot data manifests | build_manifest_file_contexts | unfiltered, pruning |
 | total-delete-manifests | count | DataTableScan.doPlanFiles: snapshot delete manifests | build_manifest_file_contexts | deletes |
-| scanned-data-manifests | count | ManifestGroup.entries: surviving manifests traversed | manifest selection | unfiltered, pruning |
+| scanned-data-manifests | count | ManifestGroup.entries: surviving manifests traversed | start manifest processing | unfiltered, pruning, partial close |
 | skipped-data-manifests | count | ManifestGroup.entries: partition predicate or no live files | manifest selection | manifest-pruned, dead-only |
-| scanned-delete-manifests | count | DeleteFileIndex.Builder.loadDeleteFiles: surviving manifests | manifest selection | deletes |
+| scanned-delete-manifests | count | DeleteFileIndex.Builder.loadDeleteFiles: surviving manifests | start manifest processing | deletes |
 | skipped-delete-manifests | count | DeleteFileIndex.Builder.loadDeleteFiles: partition predicate or no live files | manifest selection | delete-manifest-pruned |
 | skipped-data-files | count | ManifestReader.entries: live entries failing predicates; NOT dead entries | process_data_manifest_entry | file-pruned, dead entries |
 | skipped-delete-files | count | ManifestReader.entries: live delete entries failing predicates | process_delete_manifest_entry | writer-equality-pruning (observed difference) |
@@ -27,37 +27,63 @@ https://github.com/apache/iceberg/tree/4e61757dcf568051a13bb8d4c00ef57c9f248947.
 | result-delete-files | count | same: sum of attached delete array lengths, not unique files | into_file_scan_task | unmatched and shared deletes, writer-equality-association (observed difference) |
 | total-file-size-in-bytes | bytes | same: physical data file size | into_file_scan_task | all |
 | total-delete-file-size-in-bytes | bytes | same: attached delete physical size, DV content size (ScanTaskUtil.contentSizeInBytes) | into_file_scan_task | deletes, DV |
-| total-planning-duration | ns | SnapshotScan.planFiles: timer start before doPlanFiles, stop in close callback | invocation through exhaustion and successful joins | lifecycle |
+| total-planning-duration | ns | SnapshotScan.planFiles: timer start before doPlanFiles, stop in close callback | invocation through consumer termination and worker teardown | lifecycle |
 
 There is no additional Java selected-manifest metric. For a completed operation,
 scanned means selected and visited, not an object-store cache miss.
 
 ## Lifecycle contract
 
-Each plan_files invocation owns fresh counters. A report is finalized only after
-full output consumption and successful joins of manifest, entry and delete-index
-workers. No completed report on errors, panic, cancellation, or early stream drop
-(including dropping after the last item without polling EOF). Report delivery is
-synchronous invocation of a private `MetricsReporter` after finalization and before
-EOF; the default `LoggingMetricsReporter` uses tracing. Tests use the same delivery
-path with a recording implementation. There is no separate report task.
-The timer includes manifest-list IO and caller backpressure while consuming tasks,
-but excludes report delivery. A blocking tracing subscriber can delay EOF as with
-any synchronous tracing event; no new queue, async send, or reporting error enters
-planning. Repeated/concurrent invocations do not share accumulators. No snapshot:
-no report. Existing snapshot with zero tasks: one completed report. Shared COW
-planning: no scan report.
+Each plan_files invocation owns fresh counters and produces at most one immutable
+report. Its explicit outcome is `completed` after successful EOF, `cancelled` on
+early drop (including after the last task without polling EOF) or runtime task
+cancellation, and `failed` on a planning error or panic. Known failures take
+precedence over cancellation. The planner cannot distinguish LIMIT, caller
+cancellation, and abandonment, so it does not claim an `early-limit` reason.
 
-Java SnapshotScan.planFiles uses CloseableIterable.whenComplete, whose close runs
-the callback in finally, including partial consumption and close failure. Its
-ScanMetrics belongs to the scan object, so reusing that object can accumulate.
-Rust intentionally reports only successful, fully consumed invocations and does
-not reproduce either behavior. A LIMIT query that drops planning before EOF
-therefore has no completed report; a query whose planning already reached EOF
-still does. This deliberately sacrifices partial-scan visibility to keep an
-unqualified report trustworthy. Drop can request cancellation but cannot await
-worker shutdown. Partial/error reports would need explicit outcome semantics and
-an appropriate cancellation/completion coordinator, not a snapshot of racing counters.
+Successful EOF still waits for manifest, entry, and delete-index joins. Every
+spawned future, including nested entry workers and the index, holds an operation
+guard constructed before spawn. After drop or failure, abort-on-drop handles
+request cancellation; finalization waits for the last guard to be released.
+The Arc release/acquire barrier synchronizes all contributing futures before
+reading final counters, even when a worker is still in a synchronous poll after
+cancellation. No new coordinator, accumulator task, or per-file channel is used.
+A regression blocks such a worker, requests cancellation, and confirms that
+report delivery waits for its final counter update.
+
+Delivery invokes the private synchronous `MetricsReporter` on the thread that
+releases the last owner. After successful consumption delivery precedes EOF;
+after early drop/error it may happen later, when workers stop. A live runtime
+must drive abort cleanup (runtime shutdown also drops task futures). Abrupt
+process termination cannot guarantee delivery. Tests await an explicit report
+notification with a bounded timeout. The timer includes manifest-list I/O,
+consumer backpressure, and worker teardown, but excludes reporter delivery.
+A blocking tracing subscriber can delay the releasing thread. There is no new
+report queue, async metrics send, or reporting error in the planner.
+
+No snapshot: no report. Existing zero-result snapshot: one completed report.
+Repeated/concurrent calls have independent accumulators. COW planning does not
+collect scan reports. Partial counters describe actual planning work, including
+buffered tasks the caller did not consume. Scanned manifests count processing
+starts, not all selected/queued manifests. Manifest selection and its skipped
+counts are evaluated eagerly in Rust; Java can evaluate them lazily.
+
+Java SnapshotScan.planFiles uses CloseableIterable.whenComplete: close invokes
+the report callback even after partial iteration or an iteration/close error.
+Rust now also exposes these terminated operations, but adds an outcome that Java
+reports lack and waits for contributors to stop. Java ParallelIterable.close
+requests cancellation without the same join barrier; scheduling and read-ahead
+can produce different partial counters. Do not infer numeric partial-report
+parity from common visibility. Errors before Java returns its iterable may
+produce no report, while Rust reports a failure once a snapshot-bearing planning
+invocation has begun. Java's metrics belong to the scan object and can accumulate
+on reuse; Rust's reports remain operation-scoped.
+
+The differential harness executes close after one of two tasks, close after the
+last task without requesting EOF, and a missing-manifest iteration failure.
+It compares the observed counters exactly and retains read-ahead differences,
+while checking Rust's outcome separately because Java has no corresponding tag.
+The original 22 fixtures still fully consume planning without reading rows.
 
 ## Planner behavior changes
 
@@ -68,7 +94,7 @@ now fail a scan whose data files are all pruned. Java ManifestGroup.plan
 builds DeleteFileIndex before creating data tasks. Preserving Rust's previous
 empty success is possible, but would require suppressing the report or defining
 an unused failed-index outcome. The chosen contract requires all planning stages
-to succeed. Tests exercise this error for normal and COW plans, and report suppression.
+to succeed. Tests exercise this error for normal and COW plans, and a failed report.
 
 The planner prerequisite commit skips manifests whose manifest-list counts prove there are
 no added or existing files. This matches Java's manifest selection and skipped
