@@ -139,14 +139,13 @@ last counter update precedes delivery. Repeated/concurrent planning, no-snapshot
 tables, and cancellation during manifest-list loading also have regression coverage. These checks do not establish cancellation latency
 for a network storage implementation.
 
-Three lifecycle fixtures supplement the full-consumption matrix. All three match
-compared counters and plans in the latest run, giving 21 matches and the four
-full-consumption differences above. This does not establish exact partial-counter
-parity: in the [earlier recorded run](https://github.com/DerGut/iceberg-rust/blob/5949e4210fc7ad061445e65818343a06ffd1bb83/dev/scan-reports/evidence/comparison.json),
-`close-after-one` counted one planned file in Java and two in Rust (3,003 versus
-6,006 bytes). In the latest run both counted one. Rust's worker scheduling can
-allow different amounts of read-ahead before drop; the historical mismatch and
-its pinned provenance remain available in that earlier evidence.
+Three lifecycle fixtures supplement the full-consumption matrix. Two match
+compared counters and plans in this run. `close-after-one` counts one planned file
+in Java and two in Rust (3,003 versus 6,006 bytes), giving 20 matches and five
+differences overall. Partial counts depend on worker scheduling: in the
+[previous pinned run](https://github.com/DerGut/iceberg-rust/blob/067a92c35af6188b8490659740fbf919493edbbd/dev/scan-reports/evidence/comparison.json)
+both counted one. This is not an exact partial-counter parity claim. Both observed
+results and their pinned provenance remain available.
 
 - `close-after-one`: consume one of two tasks, then close/drop. Both emit reports.
   Rust may have already planned buffered work; every observed counter difference

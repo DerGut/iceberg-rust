@@ -3,43 +3,31 @@
     {
       "fixture": "unfiltered",
       "status": "match",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "dead-only",
       "status": "match",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "manifest-pruned",
       "status": "match",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "file-pruned",
       "status": "match",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "all-pruned",
       "status": "match",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "projection",
       "status": "mismatch",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": [
         {
           "fixture": "projection",
@@ -53,92 +41,66 @@
     {
       "fixture": "current-schema",
       "status": "match",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "time-travel",
       "status": "match",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "unmatched-delete",
       "status": "match",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "shared-position",
       "status": "match",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "path-position",
       "status": "match",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "equality",
       "status": "match",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "dv",
       "status": "match",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "dv-supersession",
       "status": "match",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "delete-manifest-pruned",
       "status": "match",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "writer-unfiltered",
       "status": "match",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "writer-file-pruned",
       "status": "match",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "writer-all-pruned",
       "status": "match",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "writer-equality-pruning",
       "status": "mismatch",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": [
         {
           "fixture": "writer-equality-pruning",
@@ -222,8 +184,6 @@
     {
       "fixture": "writer-equality-association",
       "status": "mismatch",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": [
         {
           "fixture": "writer-equality-association",
@@ -311,8 +271,6 @@
     {
       "fixture": "nested-all",
       "status": "mismatch",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": [
         {
           "fixture": "nested-all",
@@ -364,34 +322,40 @@
     {
       "fixture": "metadata-projection",
       "status": "match",
-      "rust_outcome": "completed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "close-after-one",
-      "status": "match",
-      "rust_outcome": "cancelled",
-      "java_outcome": "ABSENT",
-      "mismatches": []
+      "status": "mismatch",
+      "mismatches": [
+        {
+          "fixture": "close-after-one",
+          "metric": "result_data_files",
+          "java": 1,
+          "rust": 2,
+          "explanation": "Close-time counters include work ahead of consumption. Rust's concurrent entry workers can plan buffered tasks that Java's single-manifest iterator has not visited. Both reports are partial; this observed difference is retained, not normalized."
+        },
+        {
+          "fixture": "close-after-one",
+          "metric": "total_file_size_in_bytes",
+          "java": 3003,
+          "rust": 6006,
+          "explanation": "Close-time counters include work ahead of consumption. Rust's concurrent entry workers can plan buffered tasks that Java's single-manifest iterator has not visited. Both reports are partial; this observed difference is retained, not normalized."
+        }
+      ]
     },
     {
       "fixture": "close-after-last",
       "status": "match",
-      "rust_outcome": "cancelled",
-      "java_outcome": "ABSENT",
       "mismatches": []
     },
     {
       "fixture": "manifest-read-failure",
       "status": "match",
-      "rust_outcome": "failed",
-      "java_outcome": "ABSENT",
       "mismatches": []
     }
   ],
   "unsupported_report_fields": [
-    "Outcome (Rust validates its lifecycle tag; Java reports have no outcome field)",
     "Java environment/options metadata",
     "Rust metric unit tags (not represented)",
     "Sanitized report filters (Rust stores the raw predicate)"
