@@ -156,14 +156,15 @@ for a network storage implementation.
 
 The five fully consumed COW fixtures also match, giving 23 matches among 27
 fully consumed cases. Six lifecycle fixtures exercise normal and COW planning;
-five match the compared counters and plans in this run. `cow-close-after-one`
-counts one planned file in Java and two in Rust (3,003 versus 6,006 bytes), giving
-28 matches and five differences across all 33 cases. Reports are delivered in
-all six lifecycle cases, including failures.
+four match the compared counters and plans in this run. Both `close-after-one`
+and `cow-close-after-one` count one planned file in Java and two in Rust (3,003
+versus 6,006 bytes), giving 27 matches and six differences across all 33 cases.
+Reports are delivered in all six lifecycle cases, including failures.
 
 Partial counts depend on worker scheduling. The normal `close-after-one` case
-matches in this run, but counted two files in Rust and one in Java in the
-[previous pinned run](https://github.com/DerGut/iceberg-rust/blob/3a9a0e94027a94bc75addb2d338b6ff1503aee0a/dev/scan-reports/evidence/comparison.json).
+matched in the
+[previous pinned run](https://github.com/DerGut/iceberg-rust/blob/1635f5b3c6afdc15b78705992fafcc17900b1168/dev/scan-reports/evidence/comparison.json),
+which used the identical production source tree before the commit-order rewrite.
 Both observations and their pinned provenance remain available; neither the
 normal nor COW cases establish exact partial-counter parity. The following
 lifecycle cases run in both modes:
