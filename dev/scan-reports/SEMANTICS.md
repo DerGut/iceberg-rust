@@ -54,18 +54,21 @@ A regression blocks such a worker, requests cancellation, and confirms that
 report delivery waits for its final counter update.
 
 Finalization takes place in `Drop` after the last contributor releases the state.
-Default delivery logs synchronously at debug level through a private consumer,
-including during runtime shutdown. A custom public `MetricsReporter` receives an
+Every `MetricsReporter`, including the private default debug logger, receives an
 owned `MetricsReport::Scan` in one delivery task on the table's I/O runtime.
+Reporter configuration holds an optional trait object; a REST catalog reporter
+can be implemented and installed in its own crate without a core enum change.
 Each poll restores the originating tracing dispatcher. Successful EOF waits for
 that task to finish or be cancelled; early drop and planning errors do not wait
 for async delivery. The runtime must remain alive for custom delivery after
-termination. Runtime shutdown or process termination can lose reports. Delivery
+termination, including for default logging. Runtime shutdown or process termination
+can lose reports. Delivery
 is attempted at most once with no automatic retries; calls may overlap.
 
 The timer includes manifest-list I/O, consumer backpressure, and worker teardown,
-but excludes delivery. A slow callback still delays successful EOF. Returned
-errors are debug logged without failing the scan. Callback unwinding panics are
+but excludes delivery. A slow callback still delays successful EOF. Callbacks
+return `()` and handle/log their own delivery failures; reporting cannot return a
+planning error. Callback unwinding panics are
 contained, including when finalization is already unwinding. Panic payloads are
 forgotten because their destructors can themselves panic. Implementations must
 yield during I/O and bound their own waits; blocking or process-aborting callbacks

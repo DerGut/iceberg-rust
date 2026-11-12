@@ -16,7 +16,7 @@ Java: `4e61757dcf568051a13bb8d4c00ef57c9f248947`.
 Rust upstream baseline: `63d3d522c44aec588ebb7207834a37a141c3837a`.
 PR #1 has four commits on the parent branch: `420239f78` (planner behavior),
 `43ff46807` (counting), `c59926e50` (private reporting with debug logging), and
-`aebcf7d45` (public async reporter API and configuration). The planner prerequisite commit unifies worker results and completion, with controlled manifest-read failure and
+`e575d460d` (public async reporter API and configuration). The planner prerequisite commit unifies worker results and completion, with controlled manifest-read failure and
 cancellation tests, unused delete-index failures, and dead-only manifest skipping
 for both scan and COW planning. The counting commit instruments both paths without
 optional counters. The reporting commit
@@ -190,8 +190,11 @@ regressions cover full consumption, cancellation, and an existing planner unwind
 including a panic payload whose destructor panics. Callback panics are contained
 without changing planning results. Finalization runs from `Drop` on the thread
 that releases the last owner, potentially during an existing unwind. Default
-debug logging runs synchronously there; custom async delivery runs on the table
-I/O runtime. Both restore the originating tracing dispatcher. Guards deliberately
+debug logging and custom reporters share one async delivery path on the table
+I/O runtime, restoring the originating tracing dispatcher. Reporter storage is an
+optional trait object; catalog crates can supply their own implementations without
+adding a core enum variant. Callbacks return `()` and handle/log their own delivery
+failures. Guards deliberately
 forget caught panic payloads so their destructors cannot cause a second panic.
 They cannot contain blocking callbacks or aborting panics.
 
@@ -199,7 +202,7 @@ Configuration regressions cover inheritance, replacement, disabling, and
 re-enabling for normal and COW scans. Gated async callbacks establish that
 successful EOF waits for delivery, consumer drop does not cancel an already
 started callback, and planning errors return without waiting. A shut-down runtime
-cancels custom delivery without hanging EOF. Disabling delivery still collects
+cancels delivery without hanging EOF, for both default logging and a custom reporter. Disabling delivery still collects
 counters. The example exercises the public configuration and read accessors;
 the differential exporter continues to use the private test seam.
 An unresolved report field name triggers a debug assertion and falls back to its
