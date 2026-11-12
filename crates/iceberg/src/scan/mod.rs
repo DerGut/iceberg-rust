@@ -5670,33 +5670,24 @@ mod tests {
         deletes: bool,
     ) {
         use crate::writer::file_writer::{FileWriter, FileWriterBuilder, ParquetWriterBuilder};
-        let mut fields = vec![
-            NestedField::required(1, "x", PrimitiveType::Long).into(),
-            NestedField::required(2, "y", PrimitiveType::Long).into(),
-            NestedField::optional(3, "z", PrimitiveType::Long).into(),
-        ];
-        if nested {
-            fields.push(
-                NestedField::optional(
-                    9,
-                    "details",
-                    Type::Struct(crate::spec::StructType::new(vec![
-                        NestedField::optional(10, "value", PrimitiveType::Long).into(),
-                    ])),
-                )
-                .into(),
-            );
-        }
-        let schema = Arc::new(
-            Schema::builder()
-                .with_schema_id(1)
-                .with_fields(fields)
-                .build()
-                .unwrap(),
-        );
+        let schema = if nested {
+            fixture.table.metadata().current_schema().clone()
+        } else {
+            Arc::new(
+                Schema::builder()
+                    .with_schema_id(1)
+                    .with_fields(vec![
+                        NestedField::required(1, "x", PrimitiveType::Long).into(),
+                        NestedField::required(2, "y", PrimitiveType::Long).into(),
+                        NestedField::optional(3, "z", PrimitiveType::Long).into(),
+                    ])
+                    .build()
+                    .unwrap(),
+            )
+        };
         let mut metadata = fixture.table.metadata().clone();
         metadata.schemas.insert(1, schema.clone());
-        metadata.last_column_id = 10;
+        metadata.last_column_id = schema.highest_field_id();
         fixture.table = fixture.table.clone().with_metadata(Arc::new(metadata));
         let snapshot = fixture.table.metadata().current_snapshot().unwrap();
         let parent = snapshot.parent_snapshot(fixture.table.metadata()).unwrap();
@@ -5725,6 +5716,9 @@ mod tests {
                     vec![Arc::new(Int64Array::from(vec![value, value + 1]))],
                     None,
                 )));
+                for field in arrow_schema.fields().iter().skip(4) {
+                    columns.push(arrow_array::new_null_array(field.data_type(), 2));
+                }
             }
             let batch = RecordBatch::try_new(arrow_schema.clone(), columns).unwrap();
             let mut parquet = ParquetWriterBuilder::new(Default::default(), schema.clone())
@@ -5882,6 +5876,12 @@ mod tests {
             "writer-equality-pruning",
             "writer-equality-association",
             "nested-all",
+            "writer-projection-filter",
+            "writer-empty-projection-filter",
+            "nested-projection-filter",
+            "nested-filter-only",
+            "cow-writer-projection-filter",
+            "cow-nested-projection-filter",
             "metadata-projection",
             "close-after-one",
             "close-after-last",
@@ -5899,6 +5899,8 @@ mod tests {
             let name = fixture_name.strip_prefix("cow-").unwrap_or(fixture_name);
             let mut fixture = if matches!(name, "current-schema" | "time-travel") {
                 TableTestFixture::new_with_column_added_after_last_write()
+            } else if name.starts_with("nested-") {
+                TableTestFixture::new_with_nested_schema()
             } else {
                 TableTestFixture::new()
             };
@@ -5914,10 +5916,10 @@ mod tests {
                 "delete-manifest-pruned" => {
                     fixture.setup_promoted_partition_with_eq_delete(false).await
                 }
-                name if name.starts_with("writer-") || name == "nested-all" => {
+                name if name.starts_with("writer-") || name.starts_with("nested-") => {
                     writer_statistics_fixture(
                         &mut fixture,
-                        name == "nested-all",
+                        name.starts_with("nested-"),
                         matches!(
                             name,
                             "writer-equality-pruning" | "writer-equality-association"
@@ -5951,10 +5953,16 @@ mod tests {
                 "file-pruned" => Some(200),
                 "delete-manifest-pruned" => Some(1),
                 "writer-file-pruned" | "writer-equality-pruning" => Some(20),
+                "writer-projection-filter"
+                | "writer-empty-projection-filter"
+                | "nested-projection-filter"
+                | "nested-filter-only" => Some(20),
                 "writer-all-pruned" => Some(5),
                 _ => None,
             };
-            let filter_column = if name.starts_with("writer-") {
+            let filter_column = if name == "nested-filter-only" {
+                "details.value"
+            } else if name.starts_with("writer-") || name == "nested-projection-filter" {
                 "y"
             } else {
                 "x"
@@ -5997,8 +6005,21 @@ mod tests {
             if name == "all-pruned" {
                 builder = builder.with_filter(Reference::new("x").equal_to(Datum::long(200)));
             }
-            if name == "projection" {
-                builder = builder.select(["X", "Z"]).with_case_sensitive(false);
+            match name {
+                "projection" | "writer-projection-filter" => {
+                    builder = builder.select(["X", "Z"]).with_case_sensitive(false);
+                }
+                "writer-empty-projection-filter" => builder = builder.select_empty(),
+                "nested-projection-filter" => {
+                    builder = builder
+                        .select(["DETAILS", "NUMBERS", "RECORDS", "LOOKUP", "OBJECTS"])
+                        .with_case_sensitive(false);
+                }
+                "nested-filter-only" => {
+                    builder =
+                        builder.select(["x", "y", "z", "numbers", "records", "lookup", "objects"]);
+                }
+                _ => {}
             }
             if name == "metadata-projection" {
                 builder = builder.select([

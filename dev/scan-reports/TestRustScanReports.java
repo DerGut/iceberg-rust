@@ -61,7 +61,16 @@ class TestRustScanReports {
           scan = scan.filter(Expressions.lessThan(fixture.get("filter_column").asText(), fixture.get("threshold").asLong()));
         }
         if (name.equals("all-pruned")) { scan = scan.filter(Expressions.equal("x", 200L)); }
-        if (name.equals("projection")) { scan = scan.caseSensitive(false).select("X", "Z"); }
+        if (name.equals("projection") || name.equals("writer-projection-filter")) {
+          scan = scan.caseSensitive(false).select("X", "Z");
+        }
+        if (name.equals("writer-empty-projection-filter")) { scan = scan.select(List.of()); }
+        if (name.equals("nested-projection-filter")) {
+          scan = scan.caseSensitive(false).select("DETAILS", "NUMBERS", "RECORDS", "LOOKUP", "OBJECTS");
+        }
+        if (name.equals("nested-filter-only")) {
+          scan = scan.select("x", "y", "z", "numbers", "records", "lookup", "objects");
+        }
         if (name.equals("metadata-projection")) {
           // select() resolves table columns only; project() can include metadata columns.
           scan = scan.project(new Schema(table.schema().schemaId(), List.of(

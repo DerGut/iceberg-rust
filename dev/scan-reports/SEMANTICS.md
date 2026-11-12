@@ -59,8 +59,12 @@ must drive abort cleanup (runtime shutdown also drops task futures). Abrupt
 process termination cannot guarantee delivery. Tests await an explicit report
 notification with a bounded timeout. The timer includes manifest-list I/O,
 consumer backpressure, and worker teardown, but excludes reporter delivery.
-A blocking tracing subscriber can delay the releasing thread. There is no new
-report queue, async metrics send, or reporting error in the planner.
+Reporter callback unwinding panics are contained, including during an existing
+planner unwind. Panic payloads are deliberately forgotten because their destructors
+can themselves panic. Finalization still occurs if consumer delivery panics; a
+successful callback is not guaranteed. Blocking callbacks still delay the releasing
+thread, and aborting panics cannot be caught. There is no new report queue, async
+metrics send, or reporting error in the planner.
 
 No snapshot: no report. Existing zero-result snapshot: one report after termination.
 Repeated/concurrent calls have independent accumulators. Normal and COW planning
@@ -127,13 +131,18 @@ snapshot schema. At the pinned Java revision, DataTableScan.useSnapshotSchema()
 returns true, and SnapshotScan.useSnapshot() selects SnapshotUtil.schemaFor for
 that snapshot. The harness therefore calls useSnapshot() without project().
 Java reports sanitized filters; Rust stores the predicate privately and logs only
-whether a filter is present, without literal values. Nested projection needs special care:
-Java TypeUtil.getProjectedIds includes struct IDs and their selected descendants.
-The `nested-all` run observes Java IDs [1,2,3,9,10] versus Rust [1,2,3,9]: Rust
-currently records its resolved top-level task projection. Both plan the entire
-struct, with matching counters. Expanding Rust reports to Java's representation
-is an unresolved contract choice; direct nested-subfield selection is unsupported
-by the Rust planner. List/map projection reports have not been compared.
+whether a filter is present, without literal values.
+
+Rust report projection follows Java BaseScan.lazyColumnProjection: expand selected
+whole types, add bound filter references, and enumerate the resolved projection
+with TypeUtil.getProjectedIds semantics. This includes struct ancestors and selected
+descendants, and Java's list/map container rules. Names come from the schema rather
+than requested case-sensitive spellings. This changes report fields, not task output
+projection. The fixtures include primitive/struct list elements and map values,
+filters on unselected columns or nested descendants, empty output projection, case
+insensitivity, and COW planning. Direct nested-subfield output selection remains
+unsupported by the Rust planner. An unresolved report name asserts in debug builds
+and falls back to its numeric ID in release builds.
 
 Java also filters delete entries using row metrics and sequence-number thresholds;
 Rust's current delete entry planner filters partitions only. The writer-equality-pruning
@@ -149,5 +158,8 @@ source-audited, not differentially exercised.
 Partial projection difference observed by the harness: Java BaseScan.schema ->
 BaseScan.lazyColumnProjection -> TypeUtil.project constructs a new Schema with
 its default ID (0). Rust reports the actual source schema ID (1 in `projection`).
-This is retained as a mismatch, not normalized away. The intended Rust contract
-keeps schema identity useful for resolving the projected IDs against metadata.
+This is retained as a mismatch, not normalized away. Source-schema selection
+predates reporting; copying that schema ID into the report is a reporting-specific
+choice, still under discussion. It also affects the empty and nested partial
+projection fixtures. Full projections, including those made full by filter-required
+fields, preserve Java's original schema ID.
