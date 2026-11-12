@@ -302,8 +302,23 @@
     },
     {
       "fixture": "close-after-one",
-      "status": "match",
-      "mismatches": []
+      "status": "mismatch",
+      "mismatches": [
+        {
+          "fixture": "close-after-one",
+          "metric": "result_data_files",
+          "java": 1,
+          "rust": 2,
+          "explanation": "Close-time counters include work ahead of consumption. Rust's concurrent entry workers can plan buffered tasks that Java's single-manifest iterator has not visited. Both reports are partial; this observed difference is retained, not normalized."
+        },
+        {
+          "fixture": "close-after-one",
+          "metric": "total_file_size_in_bytes",
+          "java": 3003,
+          "rust": 6006,
+          "explanation": "Close-time counters include work ahead of consumption. Rust's concurrent entry workers can plan buffered tasks that Java's single-manifest iterator has not visited. Both reports are partial; this observed difference is retained, not normalized."
+        }
+      ]
     },
     {
       "fixture": "close-after-last",

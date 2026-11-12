@@ -146,14 +146,13 @@ shared physical-file plans; Python does not fabricate unit tags for Rust.
 ## Results and limits
 
 The [archived run](evidence/manifest.json) captured Rust revision
-`7a393a73368821709ded13cf2187485cdf69ab98`, including production revision
-`aebcf7d45234491d7b26b7e60932c8d09f931503`. Of 39 fixtures, 37 match every
+`9375ad567c763a798ca3381bcb96e445a7875d1f`, including production revision
+`e575d460d3bd8d80fc46e52e6688f9221bf19c46`. Of 39 fixtures, 36 match every
 compared field, counter, and plan. All schema IDs and projected field IDs/names
 match Java, including partial, empty-output, nested, filter-completed, metadata,
-and COW projections. The two mismatched fixtures are existing equality-delete
-planning differences. Every mismatch is retained in
-[comparison.json](evidence/comparison.json). All six lifecycle cases matched in
-this run; partial-counter agreement remains scheduling-dependent.
+and COW projections. The three mismatched fixtures are two existing equality-delete
+planning differences and one partial-close read-ahead case. Every mismatch is
+retained in [comparison.json](evidence/comparison.json).
 
 Of the 33 fully consumed fixtures (26 normal, seven COW), 31 match all compared
 fields, counters, and file/delete plans. Two fixtures retain differences:
@@ -194,31 +193,29 @@ debug logging and custom reporters share one async delivery path on the table
 I/O runtime, restoring the originating tracing dispatcher. Reporter storage is an
 optional trait object; catalog crates can supply their own implementations without
 adding a core enum variant. Callbacks return `()` and handle/log their own delivery
-failures. Guards deliberately
-forget caught panic payloads so their destructors cannot cause a second panic.
+failures. Guards deliberately forget caught panic payloads so their destructors cannot cause a second panic.
 They cannot contain blocking callbacks or aborting panics.
 
 Configuration regressions cover inheritance, replacement, disabling, and
 re-enabling for normal and COW scans. Gated async callbacks establish that
 successful EOF waits for delivery, consumer drop does not cancel an already
 started callback, and planning errors return without waiting. A shut-down runtime
-cancels delivery without hanging EOF, for both default logging and a custom reporter. Disabling delivery still collects
-counters. The example exercises the public configuration and read accessors;
+cancels delivery without hanging EOF, for both default logging and a custom
+reporter. Disabling delivery still collects counters. The example exercises the public configuration and read accessors;
 the differential exporter continues to use the private test seam.
 An unresolved report field name triggers a debug assertion and falls back to its
 numeric ID in release builds; Rust regression coverage checks both paths.
 These checks do not establish cancellation latency for a network storage
 implementation.
 
-Six lifecycle fixtures exercise normal and COW planning; all six match the
-compared counters and plans in this run. Both close-after-one cases count one
-planned file (3,003 bytes) in Java and Rust. Reports are delivered in all six
-lifecycle cases, including failures.
+Six lifecycle fixtures exercise normal and COW planning; five match the
+compared counters and plans in this run. Normal close-after-one counts two files
+in Rust (6,006 bytes) versus one in Java (3,003 bytes); the COW counterpart counts
+one in both. Reports are delivered in all six lifecycle cases, including failures.
 
-Partial counts depend on worker scheduling. The normal close-after-one case
-counted two Rust files versus one Java file in the
-[preceding pinned run](https://github.com/DerGut/iceberg-rust/blob/8c55ac82db60b92a6deab1a7d62acac053bc22ac/dev/scan-reports/evidence/comparison.json).
-Both close-after-one cases differed in an
+Partial counts depend on worker scheduling. Both close-after-one cases matched
+in the [preceding pinned run](https://github.com/DerGut/iceberg-rust/blob/d467bb6b2201e745b70457dc150473d6a532a3c6/dev/scan-reports/evidence/comparison.json).
+Both differed in an
 [earlier pinned run](https://github.com/DerGut/iceberg-rust/blob/d729ff0aea8070f4e872e0f4ec2f3685ef7d1c8b/dev/scan-reports/evidence/comparison.json).
 These observations and their provenance remain available; neither normal nor
 COW cases establish exact partial-counter parity. The following lifecycle cases

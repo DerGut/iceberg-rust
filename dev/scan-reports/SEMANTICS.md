@@ -60,16 +60,16 @@ Reporter configuration holds an optional trait object; a REST catalog reporter
 can be implemented and installed in its own crate without a core enum change.
 Each poll restores the originating tracing dispatcher. Successful EOF waits for
 that task to finish or be cancelled; early drop and planning errors do not wait
-for async delivery. The runtime must remain alive for custom delivery after
-termination, including for default logging. Runtime shutdown or process termination
-can lose reports. Delivery
-is attempted at most once with no automatic retries; calls may overlap.
+for async delivery. The runtime must remain alive for delivery after termination,
+including default logging. Runtime shutdown or process termination can lose
+reports. Delivery is attempted at most once with no automatic retries; calls may
+overlap.
 
 The timer includes manifest-list I/O, consumer backpressure, and worker teardown,
 but excludes delivery. A slow callback still delays successful EOF. Callbacks
 return `()` and handle/log their own delivery failures; reporting cannot return a
-planning error. Callback unwinding panics are
-contained, including when finalization is already unwinding. Panic payloads are
+planning error. Callback unwinding panics are contained, including when
+finalization is already unwinding. Panic payloads are
 forgotten because their destructors can themselves panic. Implementations must
 yield during I/O and bound their own waits; blocking or process-aborting callbacks
 cannot be contained. Tests use explicit completion notifications and bounded
