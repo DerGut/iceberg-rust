@@ -99,6 +99,9 @@ Only these representation conversions are made:
   a dot before the table name, matching its `Display` implementation, for comparison
   with Java's table-name string. Namespace components remain typed in the raw capture.
 - Snake-case Rust field names map to Java's hyphenated metric names.
+- For COW tasks only, `residual_is_true` compares the absence of a Rust task
+  predicate with Java's always-true residual. Each side must independently be
+  true. Ordinary scan task residuals are not compared by this harness.
 - Plan order, delete order, and paired projected IDs/names are sorted. Paths,
   sizes, delete content types, and DV offsets/sizes are compared exactly.
 - Rust predicate enums map to Java expression JSON for the fixture operators.
@@ -150,13 +153,19 @@ last counter update precedes delivery. Repeated/concurrent planning, no-snapshot
 tables, and cancellation during manifest-list loading also have regression coverage. These checks do not establish cancellation latency
 for a network storage implementation.
 
-Three lifecycle fixtures supplement the full-consumption matrix. Two match
-compared counters and plans in this run. `close-after-one` counts one planned file
-in Java and two in Rust (3,003 versus 6,006 bytes), giving 20 matches and five
-differences overall. Partial counts depend on worker scheduling: in the
-[previous pinned run](https://github.com/DerGut/iceberg-rust/blob/067a92c35af6188b8490659740fbf919493edbbd/dev/scan-reports/evidence/comparison.json)
-both counted one. This is not an exact partial-counter parity claim. Both observed
-results and their pinned provenance remain available.
+The five fully consumed COW fixtures also match, giving 23 matches among 27
+fully consumed cases. Six lifecycle fixtures exercise normal and COW planning;
+five match the compared counters and plans in this run. `cow-close-after-one`
+counts one planned file in Java and two in Rust (3,003 versus 6,006 bytes), giving
+28 matches and five differences across all 33 cases. Reports are delivered in
+all six lifecycle cases, including failures.
+
+Partial counts depend on worker scheduling. The normal `close-after-one` case
+matches in this run, but counted two files in Rust and one in Java in the
+[previous pinned run](https://github.com/DerGut/iceberg-rust/blob/3a9a0e94027a94bc75addb2d338b6ff1503aee0a/dev/scan-reports/evidence/comparison.json).
+Both observations and their pinned provenance remain available; neither the
+normal nor COW cases establish exact partial-counter parity. The following
+lifecycle cases run in both modes:
 
 - `close-after-one`: consume one of two tasks, then close/drop. Both emit reports.
   Rust may have already planned buffered work; every observed counter difference
@@ -167,7 +176,7 @@ results and their pinned provenance remain available.
   intentionally removed manifest. Both fail iteration and deliver a report;
   the removed path and iteration error are recorded in the fixture capture.
 
-All three use the same input files for both implementations. Partial counters
+All six use the same input files for both implementations. Partial counters
 are scheduling-dependent; consumed plans and every counter are still compared
 exactly, with differences recorded rather than discarded. Neither report has an
 outcome field; iteration errors and requested consumption are captured independently.

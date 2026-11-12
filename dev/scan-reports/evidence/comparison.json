@@ -326,23 +326,8 @@
     },
     {
       "fixture": "close-after-one",
-      "status": "mismatch",
-      "mismatches": [
-        {
-          "fixture": "close-after-one",
-          "metric": "result_data_files",
-          "java": 1,
-          "rust": 2,
-          "explanation": "Close-time counters include work ahead of consumption. Rust's concurrent entry workers can plan buffered tasks that Java's single-manifest iterator has not visited. Both reports are partial; this observed difference is retained, not normalized."
-        },
-        {
-          "fixture": "close-after-one",
-          "metric": "total_file_size_in_bytes",
-          "java": 3003,
-          "rust": 6006,
-          "explanation": "Close-time counters include work ahead of consumption. Rust's concurrent entry workers can plan buffered tasks that Java's single-manifest iterator has not visited. Both reports are partial; this observed difference is retained, not normalized."
-        }
-      ]
+      "status": "match",
+      "mismatches": []
     },
     {
       "fixture": "close-after-last",
@@ -351,6 +336,61 @@
     },
     {
       "fixture": "manifest-read-failure",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "cow-writer-unfiltered",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "cow-writer-file-pruned",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "cow-writer-all-pruned",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "cow-shared-position",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "cow-dv",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "cow-close-after-one",
+      "status": "mismatch",
+      "mismatches": [
+        {
+          "fixture": "cow-close-after-one",
+          "metric": "result_data_files",
+          "java": 1,
+          "rust": 2,
+          "explanation": "Close-time counters include work ahead of consumption. Rust's concurrent entry workers can plan buffered tasks that Java's single-manifest iterator has not visited. Both reports are partial; this observed difference is retained, not normalized."
+        },
+        {
+          "fixture": "cow-close-after-one",
+          "metric": "total_file_size_in_bytes",
+          "java": 3003,
+          "rust": 6006,
+          "explanation": "Close-time counters include work ahead of consumption. Rust's concurrent entry workers can plan buffered tasks that Java's single-manifest iterator has not visited. Both reports are partial; this observed difference is retained, not normalized."
+        }
+      ]
+    },
+    {
+      "fixture": "cow-close-after-last",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "cow-manifest-read-failure",
       "status": "match",
       "mismatches": []
     }

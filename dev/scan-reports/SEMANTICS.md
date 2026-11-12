@@ -89,9 +89,9 @@ The original 22 fixtures still fully consume planning without reading rows.
 
 COW uses the same reporting lifecycle and counters. Its report retains the filter
 used to select candidate files; its tasks clear the row predicate so a rewrite
-can read the entire file. Java Spark's `SparkScanBuilder.buildCopyOnWriteScan`
-attaches a metrics reporter to a batch scan with `ignoreResiduals()` (lines
-699-734 at the pinned revision). The COW harness follows that core scan setup
+can read the entire file. Java Spark's
+[`SparkScanBuilder.buildCopyOnWriteScan`](https://github.com/apache/iceberg/blob/4e61757dcf568051a13bb8d4c00ef57c9f248947/spark/v4.0/spark/src/main/java/org/apache/iceberg/spark/source/SparkScanBuilder.java#L699-L734)
+attaches a metrics reporter to a batch scan with `ignoreResiduals()`. The COW harness follows that core scan setup
 with the same snapshot, filter, case sensitivity, and projection as Rust. Five
 fully consumed COW cases cover writer-produced statistics, file/all pruning,
 shared positional deletes, and DVs. Three more cover partial close, close after
