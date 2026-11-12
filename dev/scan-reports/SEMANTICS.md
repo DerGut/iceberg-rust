@@ -4,7 +4,8 @@ Reference: Java Iceberg `4e61757dcf568051a13bb8d4c00ef57c9f248947`;
 Rust baseline `63d3d522c44aec588ebb7207834a37a141c3837a` (upstream main checked).
 Original proposal: https://github.com/apache/iceberg-rust/pull/1496 and
 https://github.com/apache/iceberg-rust/issues/1466. This change retains operation
-reports without the old per-entry metrics channels or public reporter API.
+reports without the old per-entry metrics channels. A final commit exposes the
+validated report model through a small async reporter API.
 
 Java paths below are relative to `core/src/main/java/org/apache/iceberg/` at
 https://github.com/apache/iceberg/tree/4e61757dcf568051a13bb8d4c00ef57c9f248947.
@@ -52,19 +53,34 @@ cancellation. No new coordinator, accumulator task, or per-file channel is used.
 A regression blocks such a worker, requests cancellation, and confirms that
 report delivery waits for its final counter update.
 
-Delivery invokes the private synchronous `MetricsReporter` on the thread that
-releases the last owner. After successful consumption delivery precedes EOF;
-after early drop/error it may happen later, when workers stop. A live runtime
-must drive abort cleanup (runtime shutdown also drops task futures). Abrupt
-process termination cannot guarantee delivery. Tests await an explicit report
-notification with a bounded timeout. The timer includes manifest-list I/O,
-consumer backpressure, and worker teardown, but excludes reporter delivery.
-Reporter callback unwinding panics are contained, including during an existing
-planner unwind. Panic payloads are deliberately forgotten because their destructors
-can themselves panic. Finalization still occurs if consumer delivery panics; a
-successful callback is not guaranteed. Blocking callbacks still delay the releasing
-thread, and aborting panics cannot be caught. There is no new report queue, async
-metrics send, or reporting error in the planner.
+Finalization takes place in `Drop` after the last contributor releases the state.
+Default delivery logs synchronously at debug level through a private consumer,
+including during runtime shutdown. A custom public `MetricsReporter` receives an
+owned `MetricsReport::Scan` in one delivery task on the table's I/O runtime.
+Each poll restores the originating tracing dispatcher. Successful EOF waits for
+that task to finish or be cancelled; early drop and planning errors do not wait
+for async delivery. The runtime must remain alive for custom delivery after
+termination. Runtime shutdown or process termination can lose reports. Delivery
+is attempted at most once with no automatic retries; calls may overlap.
+
+The timer includes manifest-list I/O, consumer backpressure, and worker teardown,
+but excludes delivery. A slow callback still delays successful EOF. Returned
+errors are debug logged without failing the scan. Callback unwinding panics are
+contained, including when finalization is already unwinding. Panic payloads are
+forgotten because their destructors can themselves panic. Implementations must
+yield during I/O and bound their own waits; blocking or process-aborting callbacks
+cannot be contained. Tests use explicit completion notifications and bounded
+timeouts, including a gated callback and a shut-down runtime.
+
+`Table::with_metrics_reporter(Some(...))` replaces default logging for that table
+instance and its future clones. A scan override takes precedence; `None` disables
+delivery at either scope, and an explicit scan reporter can re-enable delivery
+for a disabled table. Unspecified scan configuration inherits the table setting.
+Configuration is not persisted or inherited by separately loaded tables.
+Disabling delivery does not disable collection. Reports expose read accessors,
+including an unsanitized filter; construction and accumulators remain private.
+The default logger does not log literal filter values. There is no per-file
+metrics send, accumulator task, global recorder, REST delivery, or commit report.
 
 No snapshot: no report. Existing zero-result snapshot: one report after termination.
 Repeated/concurrent calls have independent accumulators. Normal and COW planning
