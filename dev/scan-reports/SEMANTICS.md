@@ -89,17 +89,17 @@ The differential harness executes close after one of two tasks, close after the
 last task without requesting EOF, and a missing-manifest iteration failure.
 It compares the observed counters exactly and retains read-ahead differences.
 Iteration errors and requested consumption are captured independently of reports.
-The original 22 fixtures still fully consume planning without reading rows.
+The other 33 fixtures fully consume planning without reading rows.
 
 COW uses the same reporting lifecycle and counters. Its report retains the filter
 used to select candidate files; its tasks clear the row predicate so a rewrite
 can read the entire file. Java Spark's
 [`SparkScanBuilder.buildCopyOnWriteScan`](https://github.com/apache/iceberg/blob/4e61757dcf568051a13bb8d4c00ef57c9f248947/spark/v4.0/spark/src/main/java/org/apache/iceberg/spark/source/SparkScanBuilder.java#L699-L734)
 attaches a metrics reporter to a batch scan with `ignoreResiduals()`. The COW harness follows that core scan setup
-with the same snapshot, filter, case sensitivity, and projection as Rust. Five
+with the same snapshot, filter, case sensitivity, and projection as Rust. Seven
 fully consumed COW cases cover writer-produced statistics, file/all pruning,
-shared positional deletes, and DVs. Three more cover partial close, close after
-the last task, and a manifest-read error. The plan capture checks each COW task's
+shared positional deletes, DVs, and nested/filter-required report projections.
+Three more cover partial close, close after the last task, and a manifest-read error. The plan capture checks each COW task's
 actual cleared predicate/always-true residual. This validates scan planning;
 it does not execute a Spark job, read rows, rewrite files, or commit changes.
 
@@ -161,5 +161,9 @@ its default ID (0). Rust reports the actual source schema ID (1 in `projection`)
 This is retained as a mismatch, not normalized away. Source-schema selection
 predates reporting; copying that schema ID into the report is a reporting-specific
 choice, still under discussion. It also affects the empty and nested partial
-projection fixtures. Full projections, including those made full by filter-required
-fields, preserve Java's original schema ID.
+projection fixtures. Report field enumeration is infallible and does not alter
+task projection. Variant collection traversal has Rust regression coverage only;
+the pinned Java schema projection helper rejects explicit variant list/map
+selection, so that case is outside the executed comparison. Full projections,
+including those made full by filter-required fields, preserve Java's original
+schema ID.

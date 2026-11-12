@@ -270,52 +270,60 @@
     },
     {
       "fixture": "nested-all",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "writer-projection-filter",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "writer-empty-projection-filter",
       "status": "mismatch",
       "mismatches": [
         {
-          "fixture": "nested-all",
-          "metric": "projection",
-          "java": [
-            [
-              1,
-              "x"
-            ],
-            [
-              2,
-              "y"
-            ],
-            [
-              3,
-              "z"
-            ],
-            [
-              9,
-              "details"
-            ],
-            [
-              10,
-              "details.value"
-            ]
-          ],
-          "rust": [
-            [
-              1,
-              "x"
-            ],
-            [
-              2,
-              "y"
-            ],
-            [
-              3,
-              "z"
-            ],
-            [
-              9,
-              "details"
-            ]
-          ],
-          "explanation": "Java TypeUtil.getProjectedIds includes the selected struct and its child ID; Rust reports the resolved top-level task projection. Both plan the whole struct. Nested report representation remains a contract decision for review."
+          "fixture": "writer-empty-projection-filter",
+          "metric": "schema_id",
+          "java": 0,
+          "rust": 1,
+          "explanation": "Java TypeUtil.project constructs a partial schema with default ID 0; Rust intentionally retains the source schema ID"
+        }
+      ]
+    },
+    {
+      "fixture": "nested-projection-filter",
+      "status": "mismatch",
+      "mismatches": [
+        {
+          "fixture": "nested-projection-filter",
+          "metric": "schema_id",
+          "java": 0,
+          "rust": 1,
+          "explanation": "Java TypeUtil.project constructs a partial schema with default ID 0; Rust intentionally retains the source schema ID"
+        }
+      ]
+    },
+    {
+      "fixture": "nested-filter-only",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "cow-writer-projection-filter",
+      "status": "match",
+      "mismatches": []
+    },
+    {
+      "fixture": "cow-nested-projection-filter",
+      "status": "mismatch",
+      "mismatches": [
+        {
+          "fixture": "cow-nested-projection-filter",
+          "metric": "schema_id",
+          "java": 0,
+          "rust": 1,
+          "explanation": "Java TypeUtil.project constructs a partial schema with default ID 0; Rust intentionally retains the source schema ID"
         }
       ]
     },

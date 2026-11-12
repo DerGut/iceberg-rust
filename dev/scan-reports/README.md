@@ -49,13 +49,14 @@ manifest lists, manifests, and physical Parquet/Puffin files. Java does not gene
 an equivalent table independently. Both planners fully consume tasks without
 reading rows. The input inventory hashes the shared files.
 
-The 22 cases cover:
+The 26 fully consumed normal-scan cases cover:
 
 - `unfiltered`, `dead-only`, `manifest-pruned`, `file-pruned`, `all-pruned`: live and
   dead entries, manifest exclusion, and zero-result scans.
 - `projection`, `current-schema`, `time-travel`, `nested-all`,
   `metadata-projection`: case-insensitive selection, schema evolution, nested
-  select-all, and `_file`/`_pos`/`_spec_id` alongside a data column.
+  structs, primitive/struct list elements and map values, and
+  `_file`/`_pos`/`_spec_id` alongside a data column.
 - `unmatched-delete`, `shared-position`, `path-position`, `equality`: positional
   deletes attached to zero/one/ten data files and equality deletes across partition
   type promotion.
@@ -66,18 +67,22 @@ The 22 cases cover:
   `writer-equality-pruning`, `writer-equality-association`: actual Parquet writer
   statistics, dead entries, data-file pruning, delete-file predicate pruning, and
   equality-delete association using column bounds.
+- `writer-projection-filter`, `writer-empty-projection-filter`,
+  `nested-projection-filter`, `nested-filter-only`: filter-required columns absent
+  from output selection, empty output projections, nested filter ancestors, and
+  case-insensitive struct/list/map selection.
 
-Eight `cow-` fixtures additionally exercise COW planning. Five fully consume
+Ten `cow-` fixtures additionally exercise COW planning. Seven fully consume
 `writer-unfiltered`, `writer-file-pruned`, `writer-all-pruned`, `shared-position`,
-and `dv`; three exercise `close-after-one`, `close-after-last`, and
-`manifest-read-failure`. Rust uses its COW planning entry point. Java constructs
+`dv`, `writer-projection-filter`, and `nested-projection-filter`; three exercise
+`close-after-one`, `close-after-last`, and `manifest-read-failure`. Rust uses its COW planning entry point. Java constructs
 a batch scan with `ignoreResiduals()`, as Spark's COW scan builder does, matching
 the snapshot, filter, case sensitivity, and projection. Reports retain the
 selection filter; the captures separately verify that COW tasks clear their row
 predicate (Rust) or have an always-true residual (Java). These are planning tests,
 not Spark execution, row reading, rewriting, or commit tests.
 
-The writer cases and `nested-all` use `ParquetWriterBuilder` to produce files and
+The writer and nested cases use `ParquetWriterBuilder` to produce files and
 manifest statistics from the same record batches. They construct snapshots with
 manifest writers; this is not an append/row-delta transaction test. Older fixtures
 materialize missing files and physical sizes but retain synthetic statistics, so
@@ -123,13 +128,15 @@ shared physical-file plans; Python does not fabricate unit tags for Rust.
 
 ## Results and limits
 
-Of the original 22 fully consumed fixtures, eighteen match all compared fields,
-counters, and file/delete plans. Four fixtures retain differences:
+Of the 33 fully consumed fixtures (26 normal, seven COW), 27 match all compared
+fields, counters, and file/delete plans. Six fixtures retain differences:
 
-- `projection`: Java's partial schema has ID 0; Rust retains source schema ID 1.
-- `nested-all`: Java reports the struct and child field IDs; Rust reports the
-  resolved top-level task fields. Plans and counters match. Whether Rust should
-  expand report IDs to Java's nested representation remains a review decision.
+- `projection`, `writer-empty-projection-filter`, `nested-projection-filter`, and
+  `cow-nested-projection-filter`: Java's partial schema has ID 0; Rust retains
+  source schema ID 1. Source-schema selection predates reporting; using its ID
+  in the report is a reporting-specific choice still open for discussion.
+  Projected field IDs/names match exactly, including nested types and filter-only
+  fields. Full projections also match schema IDs.
 - `writer-equality-pruning`: for `y < 20`, Java rejects `eq-99.parquet` using its
   actual bounds; Rust's delete-entry planner filters partitions only. Java indexes
   and attaches one delete; Rust indexes and attaches two. Java skipped-delete
@@ -141,8 +148,11 @@ counters, and file/delete plans. Four fixtures retain differences:
 
 See [SEMANTICS.md](SEMANTICS.md) for producers and lifecycle choices. No blanket
 Java-parity claim is made. Direct nested subfield selection is unsupported by
-Rust; nested list/map reports, delete sequence pruning, partition-spec evolution
-with mixed deletes, and v1 tables remain outside the executed matrix. Java's
+Rust; variant collections, delete sequence pruning, partition-spec evolution
+with mixed deletes, and v1 tables remain outside the executed Java matrix. Variant
+collections have Rust report regression coverage. The pinned Java projection
+helper rejects explicitly selected variant list elements/map values; that case
+is source-audited, not differentially executed. Java's
 reused-scan accumulation remains source-audited; Rust deliberately keeps each invocation independent.
 
 Rust tests use a manifest reader controlled by explicit notifications to block,
@@ -154,15 +164,17 @@ last counter update precedes delivery. Repeated/concurrent planning, no-snapshot
 tables, and cancellation during manifest-list loading also have regression coverage.
 Error regressions require the originating validation error and its source to survive
 channel shutdown. Scoped-subscriber tests capture real tracing reports on full
-consumption and cancellation, for both normal and COW planning. These checks do not establish cancellation latency
-for a network storage implementation.
+consumption and cancellation, for both normal and COW planning. Reporter-panic
+regressions cover full consumption, cancellation, and an existing planner unwind,
+including a panic payload whose destructor panics. Callback panics are contained
+without changing planning results; blocking or aborting callbacks are not. These
+checks do not establish cancellation latency for a network storage implementation.
 
-The five fully consumed COW fixtures also match, giving 23 matches among 27
-fully consumed cases. Six lifecycle fixtures exercise normal and COW planning;
-four match the compared counters and plans in this run. Both `close-after-one`
-and `cow-close-after-one` count one planned file in Java and two in Rust (3,003
-versus 6,006 bytes), giving 27 matches and six differences across all 33 cases.
-Reports are delivered in all six lifecycle cases, including failures.
+Six lifecycle fixtures exercise normal and COW planning; four match the compared
+counters and plans in this run. Both `close-after-one` and `cow-close-after-one`
+count one planned file in Java and two in Rust (3,003 versus 6,006 bytes), giving
+31 matches and eight mismatched fixtures across all 39 cases. Reports are
+delivered in all six lifecycle cases, including failures.
 
 Partial counts depend on worker scheduling. The normal `close-after-one` case
 matched in the
