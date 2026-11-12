@@ -63,8 +63,8 @@ A blocking tracing subscriber can delay the releasing thread. There is no new
 report queue, async metrics send, or reporting error in the planner.
 
 No snapshot: no report. Existing zero-result snapshot: one report after termination.
-Repeated/concurrent calls have independent accumulators. COW planning does not
-collect scan reports. Partial counters describe actual planning work, including
+Repeated/concurrent calls have independent accumulators. Normal and COW planning
+both collect scan reports. Partial counters describe actual planning work, including
 buffered tasks the caller did not consume. Scanned manifests count processing
 starts, not all selected/queued manifests. Manifest totals are recorded from the full list before evaluating selection,
 even if selection fails. Selection and its skipped counts are evaluated eagerly
@@ -86,6 +86,19 @@ last task without requesting EOF, and a missing-manifest iteration failure.
 It compares the observed counters exactly and retains read-ahead differences.
 Iteration errors and requested consumption are captured independently of reports.
 The original 22 fixtures still fully consume planning without reading rows.
+
+COW uses the same reporting lifecycle and counters. Its report retains the filter
+used to select candidate files; its tasks clear the row predicate so a rewrite
+can read the entire file. Java Spark's `SparkScanBuilder.buildCopyOnWriteScan`
+attaches a metrics reporter to a batch scan with `ignoreResiduals()` (lines
+699-734 at the pinned revision). The COW harness follows that core scan setup
+with the same snapshot, filter, case sensitivity, and projection as Rust. Five
+fully consumed COW cases cover writer-produced statistics, file/all pruning,
+shared positional deletes, and DVs. Three more cover partial close, close after
+the last task, and a manifest-read error. The plan capture checks each COW task's
+actual cleared predicate/always-true residual. This validates scan planning;
+it does not execute a Spark job, read rows, rewrite files, or commit changes.
+
 
 ## Planner behavior changes
 

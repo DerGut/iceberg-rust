@@ -27,6 +27,7 @@ assert {case["fixture"] for case in rust} == set(java)
 results = []
 for case in rust:
     name = case["fixture"]
+    scan_fixture = name.removeprefix("cow-")
     other = java[name]
     mismatches = []
 
@@ -50,7 +51,7 @@ for case in rust:
             explanation = ("Java TypeUtil.getProjectedIds includes the selected struct and its child ID; "
                            "Rust reports the resolved top-level task projection. Both plan the whole struct. "
                            "Nested report representation remains a contract decision for review.")
-        if name.startswith("close-") and metric not in {"table_name", "snapshot_id", "schema_id", "projection", "raw_filter", "plans"}:
+        if scan_fixture.startswith("close-") and metric not in {"table_name", "snapshot_id", "schema_id", "projection", "raw_filter", "plans"}:
             explanation = ("Close-time counters include work ahead of consumption. Rust's concurrent entry workers "
                            "can plan buffered tasks that Java's single-manifest iterator has not visited. "
                            "Both reports are partial; this observed difference is retained, not normalized.")
@@ -60,7 +61,7 @@ for case in rust:
 
     r = case["report"]
     j = other.get("report", {})
-    assert bool(case.get("planning_error")) == (name == "manifest-read-failure")
+    assert bool(case.get("planning_error")) == (scan_fixture == "manifest-read-failure")
     if "error" in other:
         mismatches.append(dict(fixture=name, metric="planning", java=other["error"],
                                rust="success", explanation="Java planning failed"))
@@ -96,6 +97,9 @@ for case in rust:
         def plans(items):
             return sorted([dict(p, deletes=sorted(p["deletes"], key=lambda d: json.dumps(d, sort_keys=True))) for p in items], key=lambda p: p["path"])
 
+        if case.get("cow_rewrite"):
+            assert all(p["residual_is_true"] for p in case["plans"]), (name, "Rust COW row filter")
+            assert all(p["residual_is_true"] for p in other["plans"]), (name, "Java COW residual")
         compare("plans", plans(other["plans"]), plans(case["plans"]), "Exact paths, sizes, delete content types and DV ranges; ordering only is normalized")
     results.append(dict(fixture=name, status="mismatch" if mismatches else "match", mismatches=mismatches))
 summary = dict(results=results, unsupported_report_fields=["Java environment/options metadata", "Rust metric unit tags (not represented)", "Sanitized report filters (Rust stores the raw predicate)"],

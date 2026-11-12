@@ -5860,7 +5860,7 @@ mod tests {
         let output = std::path::PathBuf::from(std::env::var("SCAN_REPORT_OUTPUT").unwrap());
         fs::create_dir_all(&output).unwrap();
         let mut cases = vec![];
-        for name in [
+        for fixture_name in [
             "unfiltered",
             "dead-only",
             "manifest-pruned",
@@ -5886,7 +5886,17 @@ mod tests {
             "close-after-one",
             "close-after-last",
             "manifest-read-failure",
+            "cow-writer-unfiltered",
+            "cow-writer-file-pruned",
+            "cow-writer-all-pruned",
+            "cow-shared-position",
+            "cow-dv",
+            "cow-close-after-one",
+            "cow-close-after-last",
+            "cow-manifest-read-failure",
         ] {
+            let cow = fixture_name.starts_with("cow-");
+            let name = fixture_name.strip_prefix("cow-").unwrap_or(fixture_name);
             let mut fixture = if matches!(name, "current-schema" | "time-travel") {
                 TableTestFixture::new_with_column_added_after_last_write()
             } else {
@@ -6001,8 +6011,7 @@ mod tests {
             let scan = builder.build().unwrap();
             let reporter = Arc::new(RecordingMetricsReporter::default());
             let (tasks, planning_error) = if let Some(take) = consume {
-                let mut stream = scan
-                    .plan_files_with_reporter(reporter.clone())
+                let mut stream = plan_with_reporter(&scan, reporter.clone(), cow)
                     .await
                     .unwrap();
                 let mut tasks = vec![];
@@ -6019,7 +6028,7 @@ mod tests {
                 (tasks, None)
             } else if missing_manifest.is_some() {
                 let result = tokio::time::timeout(Duration::from_secs(10), async {
-                    scan.plan_files_with_reporter(reporter.clone())
+                    plan_with_reporter(&scan, reporter.clone(), cow)
                         .await
                         .unwrap()
                         .try_collect::<Vec<_>>()
@@ -6029,21 +6038,37 @@ mod tests {
                 .unwrap();
                 (vec![], Some(result.unwrap_err().to_string()))
             } else {
-                (consume_plan(&scan, &reporter).await, None)
+                let tasks = tokio::time::timeout(Duration::from_secs(10), async {
+                    plan_with_reporter(&scan, reporter.clone(), cow)
+                        .await
+                        .unwrap()
+                        .try_collect::<Vec<_>>()
+                        .await
+                        .unwrap()
+                })
+                .await
+                .unwrap();
+                (tasks, None)
             };
             let report = reporter.wait_report().await;
             assert!(reporter.take_reports().is_empty());
-            let metadata = output.join(format!("{name}.metadata.json"));
+            let metadata = output.join(format!("{fixture_name}.metadata.json"));
             fs::write(
                 &metadata,
                 serde_json::to_vec_pretty(fixture.table.metadata()).unwrap(),
             )
             .unwrap();
-            let plans: Vec<_> = tasks.iter().map(|task| json!({
+            let plans: Vec<_> = tasks.iter().map(|task| {
+                let mut plan = json!({
                 "path": task.data_file_path(), "size": task.file_size_in_bytes(),
                 "deletes": task.deletes().iter().map(|d| json!({"path": d.file_path(), "size": d.file_size_in_bytes(), "content_size": d.content_size_in_bytes(), "content_offset": d.content_offset(), "content": match d.file_type() { DataContentType::Data => 0, DataContentType::PositionDeletes => 1, DataContentType::EqualityDeletes => 2 }})).collect::<Vec<_>>()
-            })).collect();
-            cases.push(json!({"fixture": name, "metadata": metadata, "table_ident": fixture.table.identifier().to_string(), "threshold": threshold, "filter_column": filter_column, "consume": consume, "missing_manifest": missing_manifest, "planning_error": planning_error, "report": report, "plans": plans}));
+                });
+                if cow {
+                    plan["residual_is_true"] = json!(task.predicate().is_none());
+                }
+                plan
+            }).collect();
+            cases.push(json!({"fixture": fixture_name, "cow_rewrite": cow, "metadata": metadata, "table_ident": fixture.table.identifier().to_string(), "threshold": threshold, "filter_column": filter_column, "consume": consume, "missing_manifest": missing_manifest, "planning_error": planning_error, "report": report, "plans": plans}));
         }
         fs::write(
             output.join("rust.json"),

@@ -43,8 +43,10 @@ class TestRustScanReports {
     ArrayNode results = mapper.createArrayNode();
     for (JsonNode fixture : cases) {
       ObjectNode result = results.addObject();
-      String name = fixture.get("fixture").asText();
-      result.put("fixture", name);
+      String fixtureName = fixture.get("fixture").asText();
+      boolean cow = fixture.path("cow_rewrite").asBoolean(false);
+      String name = cow ? fixtureName.substring("cow-".length()) : fixtureName;
+      result.put("fixture", fixtureName);
       List<ScanReport> reports = new ArrayList<>();
       try (HadoopFileIO io = new HadoopFileIO()) {
         Table table = new BaseTable(
@@ -68,14 +70,23 @@ class TestRustScanReports {
         }
         result.set("raw_filter", mapper.readTree(org.apache.iceberg.expressions.ExpressionParser.toJson(scan.filter())));
         ArrayNode plans = result.putArray("plans");
-        try (CloseableIterable<FileScanTask> tasks = scan.planFiles();
-             CloseableIterator<FileScanTask> iterator = tasks.iterator()) {
+        try (CloseableIterable<? extends ScanTask> tasks = cow
+                 ? table.newBatchScan()
+                     .useSnapshot(table.currentSnapshot().snapshotId())
+                     .caseSensitive(scan.isCaseSensitive())
+                     .filter(scan.filter())
+                     .project(scan.schema())
+                     .ignoreResiduals()
+                     .planFiles()
+                 : scan.planFiles();
+             CloseableIterator<? extends ScanTask> iterator = tasks.iterator()) {
           int consume = fixture.path("consume").isNull() ? -1 : fixture.get("consume").asInt();
           while (consume < 0 ? iterator.hasNext() : plans.size() < consume) {
-            FileScanTask task = iterator.next();
+            FileScanTask task = iterator.next().asFileScanTask();
             ObjectNode plan = plans.addObject();
             plan.put("path", task.file().location());
             plan.put("size", task.file().fileSizeInBytes());
+            if (cow) { plan.put("residual_is_true", task.residual().equals(Expressions.alwaysTrue())); }
             ArrayNode deletes = plan.putArray("deletes");
             for (DeleteFile delete : task.deletes()) {
               ObjectNode d = deletes.addObject();

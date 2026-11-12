@@ -14,10 +14,10 @@ test-only field on `TableScan`. Reporter configuration is not exposed publicly.
 Java: `4e61757dcf568051a13bb8d4c00ef57c9f248947`.
 Rust upstream baseline: `63d3d522c44aec588ebb7207834a37a141c3837a`.
 PR #1 has three commits on the parent branch: `e5fb2cec6` (planner behavior),
-`1883bfef7` (counting), and `8d987e97d` (reporting). The planner prerequisite commit includes controlled manifest-read failure and
+`1883bfef7` (counting), and `d74b31722` (reporting). The planner prerequisite commit includes controlled manifest-read failure and
 cancellation tests, unused delete-index failures, and dead-only manifest skipping
 for both scan and COW planning. The reporting commit
-delivers reports after contributing workers stop, including partial and failed planning.
+delivers reports after contributing workers stop, including COW, partial, and failed planning.
 Reports have no outcome tag and do not certify successful or exhaustive planning.
 The [evidence manifest](evidence/manifest.json) pins the executed Rust revision,
 Java revision, runtime versions, and command.
@@ -65,6 +65,16 @@ The 22 cases cover:
   `writer-equality-pruning`, `writer-equality-association`: actual Parquet writer
   statistics, dead entries, data-file pruning, delete-file predicate pruning, and
   equality-delete association using column bounds.
+
+Eight `cow-` fixtures additionally exercise COW planning. Five fully consume
+`writer-unfiltered`, `writer-file-pruned`, `writer-all-pruned`, `shared-position`,
+and `dv`; three exercise `close-after-one`, `close-after-last`, and
+`manifest-read-failure`. Rust uses its COW planning entry point. Java constructs
+a batch scan with `ignoreResiduals()`, as Spark's COW scan builder does, matching
+the snapshot, filter, case sensitivity, and projection. Reports retain the
+selection filter; the captures separately verify that COW tasks clear their row
+predicate (Rust) or have an always-true residual (Java). These are planning tests,
+not Spark execution, row reading, rewriting, or commit tests.
 
 The writer cases and `nested-all` use `ParquetWriterBuilder` to produce files and
 manifest statistics from the same record batches. They construct snapshots with
@@ -132,8 +142,9 @@ with mixed deletes, and v1 tables remain outside the executed matrix. Java's
 reused-scan accumulation remains source-audited; Rust deliberately keeps each invocation independent.
 
 Rust tests use a manifest reader controlled by explicit notifications to block,
-fail, or cancel I/O at concurrency one. They observe the blocked read being dropped,
-bound all waits, and check exactly one report after contributors stop.
+fail, or cancel I/O at concurrency one for normal and COW plans. They observe the blocked read being dropped,
+bound all waits, and check exactly one report after contributors stop. COW report tests also check the selection
+filter and zero/one/two-file plans, including empty tables and unused-index failures.
 A separate test blocks a running worker across cancellation and verifies that its
 last counter update precedes delivery. Repeated/concurrent planning, no-snapshot
 tables, and cancellation during manifest-list loading also have regression coverage. These checks do not establish cancellation latency
