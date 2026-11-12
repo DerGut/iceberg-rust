@@ -146,8 +146,9 @@ requested spellings. Current scans use current schema; explicit time travel uses
 snapshot schema. At the pinned Java revision, DataTableScan.useSnapshotSchema()
 returns true, and SnapshotScan.useSnapshot() selects SnapshotUtil.schemaFor for
 that snapshot. The harness therefore calls useSnapshot() without project().
-Java reports sanitized filters; Rust stores the predicate privately and logs only
-whether a filter is present, without literal values.
+Java reports sanitized filters; Rust exposes the unsanitized predicate through
+`ScanReport::filter()`. Default logging records only whether a filter is present,
+without literal values.
 
 Rust report projection follows Java BaseScan.lazyColumnProjection: expand selected
 whole types, add bound filter references, and enumerate the resolved projection

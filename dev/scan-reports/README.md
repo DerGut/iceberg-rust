@@ -146,13 +146,14 @@ shared physical-file plans; Python does not fabricate unit tags for Rust.
 ## Results and limits
 
 The [archived run](evidence/manifest.json) captured Rust revision
-`137e862d34a7d5c7cd2da1c24b43191a348de7be`, including production revision
-`33997fe4bf9a839272a2b5a451540b089ac5e4ab`. Of 39 fixtures, 36 match every
+`7a393a73368821709ded13cf2187485cdf69ab98`, including production revision
+`aebcf7d45234491d7b26b7e60932c8d09f931503`. Of 39 fixtures, 37 match every
 compared field, counter, and plan. All schema IDs and projected field IDs/names
 match Java, including partial, empty-output, nested, filter-completed, metadata,
-and COW projections. The three mismatched fixtures comprise two existing
-equality-delete planning differences and one partial-close read-ahead case.
-Every mismatch is retained in [comparison.json](evidence/comparison.json).
+and COW projections. The two mismatched fixtures are existing equality-delete
+planning differences. Every mismatch is retained in
+[comparison.json](evidence/comparison.json). All six lifecycle cases matched in
+this run; partial-counter agreement remains scheduling-dependent.
 
 Of the 33 fully consumed fixtures (26 normal, seven COW), 31 match all compared
 fields, counters, and file/delete plans. Two fixtures retain differences:
@@ -206,15 +207,16 @@ numeric ID in release builds; Rust regression coverage checks both paths.
 These checks do not establish cancellation latency for a network storage
 implementation.
 
-Six lifecycle fixtures exercise normal and COW planning; five match the compared
-counters and plans in this run. `close-after-one` counts one planned file in Java
-and two in Rust (3,003 versus 6,006 bytes). `cow-close-after-one` matches in this
-run. Reports are delivered in all six lifecycle cases, including failures.
+Six lifecycle fixtures exercise normal and COW planning; all six match the
+compared counters and plans in this run. Both close-after-one cases count one
+planned file (3,003 bytes) in Java and Rust. Reports are delivered in all six
+lifecycle cases, including failures.
 
-Partial counts depend on worker scheduling. Both close-after-one cases differed
-in the [preceding pinned run](https://github.com/DerGut/iceberg-rust/blob/d729ff0aea8070f4e872e0f4ec2f3685ef7d1c8b/dev/scan-reports/evidence/comparison.json);
-the normal case matched in an
-[earlier pinned run](https://github.com/DerGut/iceberg-rust/blob/1635f5b3c6afdc15b78705992fafcc17900b1168/dev/scan-reports/evidence/comparison.json).
+Partial counts depend on worker scheduling. The normal close-after-one case
+counted two Rust files versus one Java file in the
+[preceding pinned run](https://github.com/DerGut/iceberg-rust/blob/8c55ac82db60b92a6deab1a7d62acac053bc22ac/dev/scan-reports/evidence/comparison.json).
+Both close-after-one cases differed in an
+[earlier pinned run](https://github.com/DerGut/iceberg-rust/blob/d729ff0aea8070f4e872e0f4ec2f3685ef7d1c8b/dev/scan-reports/evidence/comparison.json).
 These observations and their provenance remain available; neither normal nor
 COW cases establish exact partial-counter parity. The following lifecycle cases
 run in both modes:
