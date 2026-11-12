@@ -46,8 +46,9 @@ not a Java execution failure. No mismatch is ignored or converted to a pass;
 
 Rust creates each table once; both runtimes read exactly the same metadata JSON,
 manifest lists, manifests, and physical Parquet/Puffin files. Java does not generate
-an equivalent table independently. Both planners fully consume tasks without
-reading rows. The input inventory hashes the shared files.
+an equivalent table independently. The primary comparisons fully consume planning
+tasks without reading rows; six separate lifecycle cases stop early or encounter
+an iteration error. The input inventory hashes the shared files.
 
 The 26 fully consumed normal-scan cases cover:
 
@@ -91,6 +92,12 @@ those cases establish planner agreement rather than row-level correctness.
 For time travel both implementations select the snapshot schema: Java's
 `DataTableScan.useSnapshotSchema()` enables this in `SnapshotScan.useSnapshot()`.
 The Java fixture calls `useSnapshot()` without an explicit projection.
+
+Report projections follow Java's resolved-field rules: expand selected nested
+types and include fields needed by the filter, even when absent from the output
+selection. Report fields are resolved independently of Rust's task output
+projection.
+
 For metadata columns Java uses an explicit projection schema:
 its `select()` resolves only table columns. Both implementations use the same
 resolved names/IDs, source schema ID, snapshot, filter, and case sensitivity in
@@ -128,13 +135,23 @@ shared physical-file plans; Python does not fabricate unit tags for Rust.
 
 ## Results and limits
 
+The [archived run](evidence/manifest.json) captured Rust revision
+`4ca9cc305fcee4a766fe1c6b642d83d677cfed76`, including production revision
+`f0d767a0baa7307af55e9b18d46c42bcccba9862`. Of 39 fixtures, 31 match every
+compared field, counter, and plan. All projected field IDs/names match Java.
+The eight mismatched fixtures comprise four schema-ID cases, two existing
+equality-delete planning differences, and two partial-close read-ahead cases.
+Every mismatch is retained in [comparison.json](evidence/comparison.json).
+
 Of the 33 fully consumed fixtures (26 normal, seven COW), 27 match all compared
 fields, counters, and file/delete plans. Six fixtures retain differences:
 
 - `projection`, `writer-empty-projection-filter`, `nested-projection-filter`, and
   `cow-nested-projection-filter`: Java's partial schema has ID 0; Rust retains
-  source schema ID 1. Source-schema selection predates reporting; using its ID
-  in the report is a reporting-specific choice still open for discussion.
+  source schema ID 1. Rust's existing planner selects the current schema for an
+  ordinary scan and the snapshot schema for time travel. Using that schema's ID
+  in the report is a reporting-specific choice, not a requirement of the planner,
+  and can change independently of planned files. It remains open for discussion.
   Projected field IDs/names match exactly, including nested types and filter-only
   fields. Full projections also match schema IDs.
 - `writer-equality-pruning`: for `y < 20`, Java rejects `eq-99.parquet` using its
@@ -167,8 +184,14 @@ channel shutdown. Scoped-subscriber tests capture real tracing reports on full
 consumption and cancellation, for both normal and COW planning. Reporter-panic
 regressions cover full consumption, cancellation, and an existing planner unwind,
 including a panic payload whose destructor panics. Callback panics are contained
-without changing planning results; blocking or aborting callbacks are not. These
-checks do not establish cancellation latency for a network storage implementation.
+without changing planning results. Delivery runs from `Drop` on the thread that
+releases the last owner, potentially during an existing unwind. The guard
+deliberately forgets caught panic payloads so their destructors cannot cause a
+second panic. It cannot contain blocking callbacks or aborting panics.
+An unresolved report field name triggers a debug assertion and falls back to its
+numeric ID in release builds; Rust regression coverage checks both paths.
+These checks do not establish cancellation latency for a network storage
+implementation.
 
 Six lifecycle fixtures exercise normal and COW planning; four match the compared
 counters and plans in this run. Both `close-after-one` and `cow-close-after-one`
