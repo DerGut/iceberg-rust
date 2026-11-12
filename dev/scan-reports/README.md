@@ -13,12 +13,12 @@ test-only field on `TableScan`. Reporter configuration is not exposed publicly.
 
 Java: `4e61757dcf568051a13bb8d4c00ef57c9f248947`.
 Rust upstream baseline: `63d3d522c44aec588ebb7207834a37a141c3837a`.
-PR #1 has three commits on the parent branch: `b221ebf70` (planner behavior),
-`ed2213827` (counting), and `c2193999d` (reporting). The planner prerequisite commit unifies worker results and completion, with controlled manifest-read failure and
+PR #1 has three commits on the parent branch: `420239f78` (planner behavior),
+`548ec0f21` (counting), and `e64996302` (reporting). The planner prerequisite commit unifies worker results and completion, with controlled manifest-read failure and
 cancellation tests, unused delete-index failures, and dead-only manifest skipping
 for both scan and COW planning. The counting commit instruments both paths without
 optional counters. The reporting commit
-delivers reports after contributing workers stop, including COW, partial, and failed planning.
+delivers reports after contributing workers stop, including COW, partial, and failed planning, restoring the originating tracing dispatcher for delivery.
 Reports have no outcome tag and do not certify successful or exhaustive planning.
 The [evidence manifest](evidence/manifest.json) pins the executed Rust revision,
 Java revision, runtime versions, and command.
@@ -151,7 +151,10 @@ bound all waits, and check exactly one report after contributors stop. COW repor
 filter and zero/one/two-file plans, including empty tables and unused-index failures.
 A separate test blocks a running worker across cancellation and verifies that its
 last counter update precedes delivery. Repeated/concurrent planning, no-snapshot
-tables, and cancellation during manifest-list loading also have regression coverage. These checks do not establish cancellation latency
+tables, and cancellation during manifest-list loading also have regression coverage.
+Error regressions require the originating validation error and its source to survive
+channel shutdown. Scoped-subscriber tests capture real tracing reports on full
+consumption and cancellation, for both normal and COW planning. These checks do not establish cancellation latency
 for a network storage implementation.
 
 The five fully consumed COW fixtures also match, giving 23 matches among 27
@@ -164,7 +167,7 @@ Reports are delivered in all six lifecycle cases, including failures.
 Partial counts depend on worker scheduling. The normal `close-after-one` case
 matched in the
 [previous pinned run](https://github.com/DerGut/iceberg-rust/blob/1635f5b3c6afdc15b78705992fafcc17900b1168/dev/scan-reports/evidence/comparison.json),
-which used the identical production source tree before the commit-order rewrite.
+before the worker-error and scoped-subscriber fixes.
 Both observations and their pinned provenance remain available; neither the
 normal nor COW cases establish exact partial-counter parity. The following
 lifecycle cases run in both modes:
