@@ -14,7 +14,7 @@ test-only field on `TableScan`. Reporter configuration is not exposed publicly.
 Java: `4e61757dcf568051a13bb8d4c00ef57c9f248947`.
 Rust upstream baseline: `63d3d522c44aec588ebb7207834a37a141c3837a`.
 PR #1 has three commits on the parent branch: `420239f78` (planner behavior),
-`43ff46807` (counting), and `f0d767a0b` (reporting). The planner prerequisite commit unifies worker results and completion, with controlled manifest-read failure and
+`43ff46807` (counting), and `33997fe4b` (reporting). The planner prerequisite commit unifies worker results and completion, with controlled manifest-read failure and
 cancellation tests, unused delete-index failures, and dead-only manifest skipping
 for both scan and COW planning. The counting commit instruments both paths without
 optional counters. The reporting commit
@@ -96,15 +96,20 @@ The Java fixture calls `useSnapshot()` without an explicit projection.
 Report projections follow Java's resolved-field rules: expand selected nested
 types and include fields needed by the filter, even when absent from the output
 selection. Report fields are resolved independently of Rust's task output
-projection.
+projection. The report preserves the source schema ID when all fields survive,
+including when filter-required fields restore the full schema. A reduced schema
+uses the default projected-schema ID, 0.
 
 For metadata columns Java uses an explicit projection schema:
-its `select()` resolves only table columns. Both implementations use the same
-resolved names/IDs, source schema ID, snapshot, filter, and case sensitivity in
-that case. This adaptation does not discard a report mismatch.
+its `select()` resolves only table columns. The fixture constructs that schema
+with Java's default ID, 0, rather than supplying the table's source schema ID.
+Both implementations use the same selected fields, snapshot, filter, and case
+sensitivity. The schema ID is compared exactly; it is not copied from Rust or
+normalized during comparison.
 Java receives its table name from the fixture identifier, independently of the
 Rust report. Negative controls independently corrupt each component of the Rust
-report identifier, a counter, and the plan and require detection of each change.
+report identifier, the partial-projection schema ID, a counter, and the plan and
+require detection of each change.
 
 Only these representation conversions are made:
 
@@ -136,24 +141,17 @@ shared physical-file plans; Python does not fabricate unit tags for Rust.
 ## Results and limits
 
 The [archived run](evidence/manifest.json) captured Rust revision
-`4ca9cc305fcee4a766fe1c6b642d83d677cfed76`, including production revision
-`f0d767a0baa7307af55e9b18d46c42bcccba9862`. Of 39 fixtures, 31 match every
-compared field, counter, and plan. All projected field IDs/names match Java.
-The eight mismatched fixtures comprise four schema-ID cases, two existing
-equality-delete planning differences, and two partial-close read-ahead cases.
+`137e862d34a7d5c7cd2da1c24b43191a348de7be`, including production revision
+`33997fe4bf9a839272a2b5a451540b089ac5e4ab`. Of 39 fixtures, 36 match every
+compared field, counter, and plan. All schema IDs and projected field IDs/names
+match Java, including partial, empty-output, nested, filter-completed, metadata,
+and COW projections. The three mismatched fixtures comprise two existing
+equality-delete planning differences and one partial-close read-ahead case.
 Every mismatch is retained in [comparison.json](evidence/comparison.json).
 
-Of the 33 fully consumed fixtures (26 normal, seven COW), 27 match all compared
-fields, counters, and file/delete plans. Six fixtures retain differences:
+Of the 33 fully consumed fixtures (26 normal, seven COW), 31 match all compared
+fields, counters, and file/delete plans. Two fixtures retain differences:
 
-- `projection`, `writer-empty-projection-filter`, `nested-projection-filter`, and
-  `cow-nested-projection-filter`: Java's partial schema has ID 0; Rust retains
-  source schema ID 1. Rust's existing planner selects the current schema for an
-  ordinary scan and the snapshot schema for time travel. Using that schema's ID
-  in the report is a reporting-specific choice, not a requirement of the planner,
-  and can change independently of planned files. It remains open for discussion.
-  Projected field IDs/names match exactly, including nested types and filter-only
-  fields. Full projections also match schema IDs.
 - `writer-equality-pruning`: for `y < 20`, Java rejects `eq-99.parquet` using its
   actual bounds; Rust's delete-entry planner filters partitions only. Java indexes
   and attaches one delete; Rust indexes and attaches two. Java skipped-delete
@@ -193,19 +191,18 @@ numeric ID in release builds; Rust regression coverage checks both paths.
 These checks do not establish cancellation latency for a network storage
 implementation.
 
-Six lifecycle fixtures exercise normal and COW planning; four match the compared
-counters and plans in this run. Both `close-after-one` and `cow-close-after-one`
-count one planned file in Java and two in Rust (3,003 versus 6,006 bytes), giving
-31 matches and eight mismatched fixtures across all 39 cases. Reports are
-delivered in all six lifecycle cases, including failures.
+Six lifecycle fixtures exercise normal and COW planning; five match the compared
+counters and plans in this run. `close-after-one` counts one planned file in Java
+and two in Rust (3,003 versus 6,006 bytes). `cow-close-after-one` matches in this
+run. Reports are delivered in all six lifecycle cases, including failures.
 
-Partial counts depend on worker scheduling. The normal `close-after-one` case
-matched in the
-[previous pinned run](https://github.com/DerGut/iceberg-rust/blob/1635f5b3c6afdc15b78705992fafcc17900b1168/dev/scan-reports/evidence/comparison.json),
-before the worker-error and scoped-subscriber fixes.
-Both observations and their pinned provenance remain available; neither the
-normal nor COW cases establish exact partial-counter parity. The following
-lifecycle cases run in both modes:
+Partial counts depend on worker scheduling. Both close-after-one cases differed
+in the [preceding pinned run](https://github.com/DerGut/iceberg-rust/blob/d729ff0aea8070f4e872e0f4ec2f3685ef7d1c8b/dev/scan-reports/evidence/comparison.json);
+the normal case matched in an
+[earlier pinned run](https://github.com/DerGut/iceberg-rust/blob/1635f5b3c6afdc15b78705992fafcc17900b1168/dev/scan-reports/evidence/comparison.json).
+These observations and their provenance remain available; neither normal nor
+COW cases establish exact partial-counter parity. The following lifecycle cases
+run in both modes:
 
 - `close-after-one`: consume one of two tasks, then close/drop. Both emit reports.
   Rust may have already planned buffered work; every observed counter difference

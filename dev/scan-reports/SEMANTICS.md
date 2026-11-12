@@ -158,8 +158,9 @@ source-audited, not differentially exercised.
 Report schema identity follows Java BaseScan.schema -> BaseScan.lazyColumnProjection
 -> TypeUtil.project. A projection that retains the entire source schema preserves
 its ID, including when filter-required fields restore otherwise omitted fields.
-A partial or empty projection uses DEFAULT_SCHEMA_ID (0). Rust keeps the source
-schema for planning; deriving this projected ID affects only the report.
+A reduced schema, including an empty projection of a nonempty source, uses
+DEFAULT_SCHEMA_ID (0). Rust keeps the source schema for planning; deriving this
+projected ID affects only the report.
 Schema IDs are compared exactly alongside projected IDs/names.
 
 Java's select() cannot resolve metadata columns, so the metadata fixture supplies
