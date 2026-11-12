@@ -73,7 +73,7 @@ class TestRustScanReports {
         }
         if (name.equals("metadata-projection")) {
           // select() resolves table columns only; project() can include metadata columns.
-          scan = scan.project(new Schema(table.schema().schemaId(), List.of(
+          scan = scan.project(new Schema(List.of(
               table.schema().findField("x"), MetadataColumns.FILE_PATH,
               MetadataColumns.ROW_POSITION, MetadataColumns.SPEC_ID)));
         }

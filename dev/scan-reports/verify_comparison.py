@@ -26,14 +26,17 @@ root = Path(sys.argv[1])
 original = json.loads((root / "rust.json").read_text())
 java = (root / "java.json").read_text()
 comparator = Path(__file__).with_name("compare.py")
-for field in ["table_ident.name", "table_ident.namespace", "result_data_files", "plans"]:
+for field in ["table_ident.name", "table_ident.namespace", "schema_id", "result_data_files", "plans"]:
     metric = "table_name" if field.startswith("table_ident.") else field
     cases = copy.deepcopy(original)
-    case = next(c for c in cases if c["fixture"] == "unfiltered")
+    fixture = "projection" if field == "schema_id" else "unfiltered"
+    case = next(c for c in cases if c["fixture"] == fixture)
     if field == "table_ident.name":
         case["report"]["table_ident"]["name"] = "incorrect"
     elif field == "table_ident.namespace":
         case["report"]["table_ident"]["namespace"] = ["incorrect"]
+    elif field == "schema_id":
+        case["report"][field] += 1
     elif metric == "result_data_files":
         case["report"]["metrics"][metric] += 1
     else:
@@ -45,6 +48,6 @@ for field in ["table_ident.name", "table_ident.namespace", "result_data_files", 
         result = subprocess.run([sys.executable, str(comparator), str(output)], capture_output=True, text=True)
         assert result.returncode == 1, result.stderr
         comparison = json.loads((output / "comparison.json").read_text())
-        differences = next(c for c in comparison["results"] if c["fixture"] == "unfiltered")["mismatches"]
+        differences = next(c for c in comparison["results"] if c["fixture"] == fixture)["mismatches"]
         assert [difference["metric"] for difference in differences] == [metric], differences
         print(f"Detected independent Rust {field} corruption")

@@ -155,15 +155,20 @@ no zero, missing value, or normalization hides the difference. These existing
 planner optimizations are outside the metrics change. Sequence pruning is still
 source-audited, not differentially exercised.
 
-Partial projection difference observed by the harness: Java BaseScan.schema ->
-BaseScan.lazyColumnProjection -> TypeUtil.project constructs a new Schema with
-its default ID (0). Rust reports the actual source schema ID (1 in `projection`).
-This is retained as a mismatch, not normalized away. Source-schema selection
-predates reporting; copying that schema ID into the report is a reporting-specific
-choice, still under discussion. It also affects the empty and nested partial
-projection fixtures. Report field enumeration is infallible and does not alter
-task projection. Variant collection traversal has Rust regression coverage only;
-the pinned Java schema projection helper rejects explicit variant list/map
-selection, so that case is outside the executed comparison. Full projections,
-including those made full by filter-required fields, preserve Java's original
-schema ID.
+Report schema identity follows Java BaseScan.schema -> BaseScan.lazyColumnProjection
+-> TypeUtil.project. A projection that retains the entire source schema preserves
+its ID, including when filter-required fields restore otherwise omitted fields.
+A partial or empty projection uses DEFAULT_SCHEMA_ID (0). Rust keeps the source
+schema for planning; deriving this projected ID affects only the report.
+Schema IDs are compared exactly alongside projected IDs/names.
+
+Java's select() cannot resolve metadata columns, so the metadata fixture supplies
+an explicit Schema containing the selected data and metadata fields. It uses the
+Schema constructor's default ID (0), matching a newly constructed projection;
+it does not copy an ID from the Rust report or table schema. Both planners select
+the same data and metadata fields.
+
+Report field enumeration is infallible and does not alter task projection.
+Variant collection traversal has Rust regression coverage only; the pinned Java
+schema projection helper rejects explicit variant list/map selection, so that
+case is outside the executed comparison.

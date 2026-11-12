@@ -66,7 +66,7 @@ for case in rust:
         table_name = ".".join(r["table_ident"]["namespace"]) + "." + r["table_ident"]["name"]
         compare("table_name", j["table-name"], table_name, "Rust TableIdent display joins namespace components and name with dots")
         for field in ["snapshot_id", "schema_id"]:
-            compare(field, j[field.replace("_", "-")], r[field], ("Java TypeUtil.project constructs a partial schema with default ID 0; Rust intentionally retains the source schema ID" if field == "schema_id" and scan_fixture in {"projection", "writer-projection-filter", "writer-empty-projection-filter", "nested-projection-filter", "nested-filter-only"} else "Report identity must agree"))
+            compare(field, j[field.replace("_", "-")], r[field], "Report identity must agree")
         compare("projection", sorted(zip(j["projected-field-ids"], j["projected-field-names"])),
                 sorted(zip(r["projected_field_ids"], r["projected_field_names"])),
                 "Resolved ID/name pairs are unordered in Java")
