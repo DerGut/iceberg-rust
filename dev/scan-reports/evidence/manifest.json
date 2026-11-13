@@ -1,5 +1,5 @@
 {
-  "production_revision": "980a56de2def52603444eb5c285a3aae1ae6f4dc",
+  "production_revision": "beea97fbb981d6f44afd401885d1843b0646e439",
   "checks": [
     {
       "name": "format",
@@ -25,7 +25,7 @@
         "scan::"
       ],
       "exit_status": 0,
-      "log_sha256": "512c048a9c4f024de681245f6898fcf8777b93f6c4fc7e3488c319c5243cf6e1"
+      "log_sha256": "c0f61e7b244eb061d1ad8bf548353ab56cf069a404ec7bf62a6ef8acb726298b"
     },
     {
       "name": "clippy",
@@ -41,7 +41,7 @@
         "warnings"
       ],
       "exit_status": 0,
-      "log_sha256": "2d5a6a0f34fdea07a15b0d5bddcc1c21bae3b83044ef411de37f30d30f58cf0d"
+      "log_sha256": "56caf3b5a835e439ed90f1a299a27b02a3c4b2471dee20aba9db70193f0be6ea"
     },
     {
       "name": "rust-capture",
@@ -58,7 +58,7 @@
         "--exact"
       ],
       "exit_status": 0,
-      "log_sha256": "6791714e818018c6108d08d66acf6b78de5e32d0f34b72fbf03b9366ca5ae0bf"
+      "log_sha256": "07501bdec48bfa786a745275d1b6f9e26831d79ac9bcb56d947a2703bdda5b0e"
     },
     {
       "name": "java-capture",
@@ -73,30 +73,30 @@
         "--console=plain"
       ],
       "exit_status": 0,
-      "log_sha256": "aee096a739650849fdaac9381b372fb6f12f8bf52cd4cf188fddb6c983bb5a61"
+      "log_sha256": "b541223fe0b301680565cfec5870ff80b0fdef6eb20e664c7c8b8a52c7c2247b"
     },
     {
       "name": "comparison",
       "command": [
         "python3",
         "/Users/jannik.steinmann/go/src/github.com/DerGut/worktrees/iceberg-rust/scan-reports/iceberg-rust/dev/scan-reports/compare.py",
-        "/tmp/scan-private-split-repro/results"
+        "/tmp/scan-setter-move/final-private-run/results"
       ],
       "exit_status": 1,
-      "log_sha256": "b8df6a9b47383fd7d3c50b52e79d29b3f648f3c7af37e53aee02c379274b720f"
+      "log_sha256": "bc7ab07fa5e7fef2d08e8938a940d5845bfdde51407cb7b45d73343bb1b04eec"
     },
     {
       "name": "comparator-controls",
       "command": [
         "python3",
         "/Users/jannik.steinmann/go/src/github.com/DerGut/worktrees/iceberg-rust/scan-reports/iceberg-rust/dev/scan-reports/verify_comparison.py",
-        "/tmp/scan-private-split-repro/results"
+        "/tmp/scan-setter-move/final-private-run/results"
       ],
       "exit_status": 0,
       "log_sha256": "a47c511a5d7a3c1857f617bbf72a0eb8b864e52ffb3d94ff1e73830693818716"
     }
   ],
-  "rust_revision": "541b7c1ecf7366b160ecc10a0ee989682751678d",
+  "rust_revision": "5b81ea94e213b608e6b37b25bb06ce23629b6cdd",
   "rust_working_tree_patch": "",
   "java_revision": "4e61757dcf568051a13bb8d4c00ef57c9f248947",
   "runtime": [
@@ -114,7 +114,7 @@
     "Darwin MacBook-Pro-3.local 25.6.0 Darwin Kernel Version 25.6.0: Mon Oct 12 00:39:48 PDT 2026; root:xnu-12377.161.15.701.48~2/RELEASE_ARM64_T6041 arm64"
   ],
   "gradle": "8.14.6 (pinned source wrapper)",
-  "command": "bash dev/scan-reports/run.sh /tmp/scan-private-split-repro",
+  "command": "bash dev/scan-reports/run.sh /tmp/scan-setter-move/final-private-run",
   "comparison_exit_status": 1,
   "mismatched_fixtures": [
     "writer-equality-pruning",
