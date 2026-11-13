@@ -15,7 +15,7 @@ validation branch; they are not part of the public report API.
 Java: `4e61757dcf568051a13bb8d4c00ef57c9f248947`.
 Rust upstream baseline: `63d3d522c44aec588ebb7207834a37a141c3837a`.
 PR #1 has three commits on the parent branch: `9d03a810a` (planner behavior),
-`9f7bc1a78` (counting), and `04fac5769` (private async reporting with debug logging).
+`9f7bc1a78` (counting), and `a6725c8ac` (private async reporting with debug logging).
 The planner prerequisite unifies worker results and completion, with controlled
 manifest-read failure and cancellation tests, unused delete-index failures, and
 dead-only manifest skipping for both scan and COW planning. The existing gated
@@ -29,6 +29,11 @@ table/scan setters, an in-memory example, and filter sanitization are on the
 separate [public follow-up branch](https://github.com/DerGut/iceberg-rust/tree/scan-reports-2-public-api).
 The [evidence manifest](evidence/manifest.json) pins the executed Rust revision,
 Java revision, runtime versions, and command.
+
+The signature-only restack replaces production `04fac5769` with `a6725c8ac`
+and public follow-up `f5115fde6` with `bffbe1289`. Each pair has an identical
+Git tree. Existing evidence retains the revisions actually executed; the scripts
+pin the signed replacements for subsequent runs. Tests were not rerun for signing.
 
 Run from the repository root with JDK 17 or 21, Python 3, curl, and the repository
 Rust toolchain installed:
@@ -261,7 +266,7 @@ an installed tracing subscriber. Logging delivery overhead has not been measured
 ## Public filter sanitization follow-up
 
 The primary scan comparison above runs the private parent. A separate check pins
-[`scan-reports-2-public-api`](https://github.com/DerGut/iceberg-rust/tree/f5115fde63d09515d13900957bd63beadfe86836)
+[`scan-reports-2-public-api`](https://github.com/DerGut/iceberg-rust/tree/bffbe1289f995bccb34fada89a83d810250f51e7)
 and compares its sanitizer regression assertions against actual Java output:
 
 ```sh
