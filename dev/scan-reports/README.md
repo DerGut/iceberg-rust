@@ -7,24 +7,26 @@ review evidence and the Java harness separately. It contains no PR-description d
 
 This harness is an ignored crate unit test plus a Java test copied into a pinned
 Iceberg source build. It adds no Rust dependencies or production API.
-The private recording reporter implements the public async `MetricsReporter`
+The private recording reporter implements the crate-private async `MetricsReporter`
 trait. Tests inject it through a private planning method, with no test-only field
 on `TableScan`. Serialization derives exist only under `cfg(test)` on this
 validation branch; they are not part of the public report API.
 
 Java: `4e61757dcf568051a13bb8d4c00ef57c9f248947`.
 Rust upstream baseline: `63d3d522c44aec588ebb7207834a37a141c3837a`.
-PR #1 has four commits on the parent branch: `420239f78` (planner behavior),
-`43ff46807` (counting), `c59926e50` (private reporting with debug logging), and
-`e575d460d` (public async reporter API and configuration). The planner prerequisite commit unifies worker results and completion, with controlled manifest-read failure and
-cancellation tests, unused delete-index failures, and dead-only manifest skipping
-for both scan and COW planning. The counting commit instruments both paths without
-optional counters. The reporting commit
-delivers reports after contributing workers stop, including COW, partial, and failed planning, restoring the originating tracing dispatcher for delivery.
+PR #1 has three commits on the parent branch: `9d03a810a` (planner behavior),
+`9f7bc1a78` (counting), and `980a56de2` (private async reporting with debug logging).
+The planner prerequisite unifies worker results and completion, with controlled
+manifest-read failure and cancellation tests, unused delete-index failures, and
+dead-only manifest skipping for both scan and COW planning. The existing gated
+storage helper stays in the caching delete loader's test module. The counting
+commit instruments both paths without optional counters. The reporting commit
+delivers reports after contributing workers stop, including COW, partial, and
+failed planning, restoring the originating tracing dispatcher for delivery.
 Reports have no outcome tag and do not certify successful or exhaustive planning.
-The public API commit preserves these counters and finalization boundaries, adds
-table configuration and scan overrides, and includes an
-[in-memory reporter example](../../crates/examples/src/scan_metrics.rs).
+Report definitions stay crate-private in `src/metrics.rs`. Public visibility,
+table/scan setters, an in-memory example, and filter sanitization are on the
+separate [public follow-up branch](https://github.com/DerGut/iceberg-rust/tree/scan-reports-2-public-api).
 The [evidence manifest](evidence/manifest.json) pins the executed Rust revision,
 Java revision, runtime versions, and command.
 
@@ -130,7 +132,9 @@ Only these representation conversions are made:
 - Rust predicate enums map to Java expression JSON for the fixture operators.
   Raw Java scan filters are captured and compared exactly with Rust report
   predicates. Java's sanitized report filter is retained but not compared: Rust
-  stores a raw predicate and does not implement Java's sanitizer.
+  keeps a raw predicate private on PR #1 and omits literal values from logging.
+  The public follow-up sanitizes before delivery; its separate oracle check is
+  described below.
 - Retained evidence replaces each fixture's temporary table root with
   `<fixture-root>` and the metadata JSON path with `<metadata-file>`. Comparison itself uses exact absolute paths before this step.
 - Durations are not compared numerically. Java nanoseconds/count=1 and the
@@ -191,18 +195,19 @@ without changing planning results. Finalization runs from `Drop` on the thread
 that releases the last owner, potentially during an existing unwind. Default
 debug logging and custom reporters share one async delivery path on the table
 I/O runtime, restoring the originating tracing dispatcher. Reporter storage is an
-optional trait object; catalog crates can supply their own implementations without
+direct `Arc<dyn MetricsReporter>`; catalog crates can supply their own implementations without
 adding a core enum variant. Callbacks return `()` and handle/log their own delivery
 failures. Guards deliberately forget caught panic payloads so their destructors cannot cause a second panic.
 They cannot contain blocking callbacks or aborting panics.
 
-Configuration regressions cover inheritance, replacement, disabling, and
-re-enabling for normal and COW scans. Gated async callbacks establish that
+Private configuration regressions cover table inheritance, scan replacement,
+custom no-op reporters, and clone/runtime preservation for normal and COW scans. Gated async callbacks establish that
 successful EOF waits for delivery, consumer drop does not cancel an already
 started callback, and planning errors return without waiting. A shut-down runtime
 cancels delivery without hanging EOF, for both default logging and a custom
-reporter. Disabling delivery still collects counters. The example exercises the public configuration and read accessors;
-the differential exporter continues to use the private test seam.
+reporter. There is no built-in disabled state; a no-op consumer still receives
+a report. The differential exporter uses the private test seam. The separate
+public follow-up example exercises the public setters and read accessors.
 An unresolved report field name triggers a debug assertion and falls back to its
 numeric ID in release builds; Rust regression coverage checks both paths.
 These checks do not establish cancellation latency for a network storage
@@ -251,3 +256,51 @@ the same run directory reproduces all retained evidence files.
 No performance claim is made. The old debug enabled/disabled timing and its test
 have been removed: they did not compare alternative implementations or exercise
 an installed tracing subscriber. Logging delivery overhead has not been measured.
+
+## Public filter sanitization follow-up
+
+The primary scan comparison above runs the private parent. A separate check pins
+[`scan-reports-2-public-api`](https://github.com/DerGut/iceberg-rust/tree/cc97a755404341966f380d6368648fa483890850)
+and compares its sanitizer regression assertions against actual Java output:
+
+```sh
+python3 dev/scan-reports/check_sanitization.py /tmp/iceberg-filter-sanitization
+```
+
+It uses the same pinned Java revision, JDK requirements, and source Gradle wrapper.
+The script extracts the public commit's fixture inputs, invokes Java's production
+binder and sanitizer visitor, and reruns the public commit's Rust full-expression
+assertions plus its normal/COW delivery test in a detached temporary worktree.
+Only Java's sanitizer clock is fixed through reflection. Binding and the public
+sanitizer's bound-to-unbound fallback are preserved. The helper does not call the
+public sanitizer method directly because that method has no injectable clock.
+Rust values in the comparison are verified expected expressions, not a separate
+Rust capture; the regression test must pass for results to be archived.
+
+The [sanitizer evidence](sanitization-evidence/manifest.json) records pinned
+revisions, runtime/wrapper versions, fixture and log hashes, check commands,
+and the harness patch. [Java's raw output](sanitization-evidence/java.json)
+retains every case and fallback. There are 85 cases, covering all supported
+predicate shapes, schema binding, numeric boundaries, strings/Unicode, malformed
+date-like strings, temporal units and relative buckets, decimals, UUIDs,
+binary/fixed values, case sensitivity, compound expressions, and sets.
+Only set ordering and duplicate sanitized set descriptions are normalized;
+Rust's predicate representation stores a set. No literal description is masked
+or discarded. The fixed clock is part of the fixture data, not a normalization.
+
+Eighty-four cases match. `timestamp-long-set` retains a pinned Java regression:
+its bound-set sanitizer throws `ClassCastException` and falls back to unbound
+longs, producing numeric descriptions. Rust keeps timestamp descriptions. The
+fixture contains both results and the explanation. **Expected exit status: 1**
+records that difference without failing the Java/Rust execution checks. See
+[SEMANTICS.md](SEMANTICS.md#public-filter-sanitization) for source history and limits.
+
+After running, retain evidence without editing its fields:
+
+```sh
+mkdir -p dev/scan-reports/sanitization-evidence
+cp /tmp/iceberg-filter-sanitization/manifest.json /tmp/iceberg-filter-sanitization/java.json dev/scan-reports/sanitization-evidence/
+```
+
+This check validates the public sanitizer and delivery seam separately; it does
+not rerun the 39 shared-file planning cases on the public follow-up.

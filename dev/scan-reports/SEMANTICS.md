@@ -4,8 +4,8 @@ Reference: Java Iceberg `4e61757dcf568051a13bb8d4c00ef57c9f248947`;
 Rust baseline `63d3d522c44aec588ebb7207834a37a141c3837a` (upstream main checked).
 Original proposal: https://github.com/apache/iceberg-rust/pull/1496 and
 https://github.com/apache/iceberg-rust/issues/1466. This change retains operation
-reports without the old per-entry metrics channels. A final commit exposes the
-validated report model through a small async reporter API.
+reports without the old per-entry metrics channels. PR #1 keeps the report model
+private in `src/metrics.rs`; a separate branch exposes the async reporter API.
 
 Java paths below are relative to `core/src/main/java/org/apache/iceberg/` at
 https://github.com/apache/iceberg/tree/4e61757dcf568051a13bb8d4c00ef57c9f248947.
@@ -56,7 +56,7 @@ report delivery waits for its final counter update.
 Finalization takes place in `Drop` after the last contributor releases the state.
 Every `MetricsReporter`, including the private default debug logger, receives an
 owned `MetricsReport::Scan` in one delivery task on the table's I/O runtime.
-Reporter configuration holds an optional trait object; a REST catalog reporter
+Reporter configuration holds a direct `Arc<dyn MetricsReporter>`; a REST catalog reporter
 can be implemented and installed in its own crate without a core enum change.
 Each poll restores the originating tracing dispatcher. Successful EOF waits for
 that task to finish or be cancelled; early drop and planning errors do not wait
@@ -75,15 +75,16 @@ yield during I/O and bound their own waits; blocking or process-aborting callbac
 cannot be contained. Tests use explicit completion notifications and bounded
 timeouts, including a gated callback and a shut-down runtime.
 
-`Table::with_metrics_reporter(Some(...))` replaces default logging for that table
-instance and its future clones. A scan override takes precedence; `None` disables
-delivery at either scope, and an explicit scan reporter can re-enable delivery
-for a disabled table. Unspecified scan configuration inherits the table setting.
-Configuration is not persisted or inherited by separately loaded tables.
-Disabling delivery does not disable collection. Reports expose read accessors,
-including an unsanitized filter; construction and accumulators remain private.
-The default logger does not log literal filter values. There is no per-file
-metrics send, accumulator task, global recorder, REST delivery, or commit report.
+The table and scan store a reporter directly, defaulting to the private debug
+logger. Test-only setters establish inheritance, scan precedence, and custom
+no-op behavior. There is no `Option`, utility wrapper, or built-in disabling
+mode. The public follow-up exposes `with_metrics_reporter(Arc<dyn MetricsReporter>)`
+on tables and scan builders; a custom no-op consumer discards reports. Table
+configuration applies to that instance and its future clones; it is not persisted
+or inherited by independently loaded tables. Private report accessors return raw
+predicates; the public follow-up sanitizes them before delivery. The default
+logger does not log literal filter values. There is no per-file metrics send,
+accumulator task, global recorder, REST delivery, or commit report.
 
 No snapshot: no report. Existing zero-result snapshot: one report after termination.
 Repeated/concurrent calls have independent accumulators. Normal and COW planning
@@ -149,9 +150,9 @@ requested spellings. Current scans use current schema; explicit time travel uses
 snapshot schema. At the pinned Java revision, DataTableScan.useSnapshotSchema()
 returns true, and SnapshotScan.useSnapshot() selects SnapshotUtil.schemaFor for
 that snapshot. The harness therefore calls useSnapshot() without project().
-Java reports sanitized filters; Rust exposes the unsanitized predicate through
-`ScanReport::filter()`. Default logging records only whether a filter is present,
-without literal values.
+Java reports sanitized filters. PR #1 keeps the unsanitized predicate private;
+default logging records only whether a filter is present, without literal values.
+The public follow-up sanitizes before delivering a report, as described below.
 
 Rust report projection follows Java BaseScan.lazyColumnProjection: expand selected
 whole types, add bound filter references, and enumerate the resolved projection
@@ -193,3 +194,46 @@ Report field enumeration is infallible and does not alter task projection.
 Variant collection traversal has Rust regression coverage only; the pinned Java
 schema projection helper rejects explicit variant list/map selection, so that
 case is outside the executed comparison.
+
+## Public filter sanitization
+
+The public follow-up sanitizes after stopping the planning timer and before
+passing the owned report to any reporter. It preserves operators and references;
+numeric values become magnitude descriptions, typed temporal values become
+relative descriptions, and remaining values use Java-compatible diagnostic
+hashes. These hashes are not cryptographic anonymization. Sanitized predicates
+are diagnostic data and must not be evaluated as the original filter.
+
+At the pinned Java revision, `SnapshotScan.planFiles` constructs its report with
+`ExpressionUtil.sanitize(schema().asStruct(), filter(), context().caseSensitive())`.
+The source history explains the intent:
+
+- [#4672](https://github.com/apache/iceberg/pull/4672), commit
+  `26d8c3ed9eceaf0fd7d2429302a4c7ccedbb2111`, introduced masking to avoid leaking
+  identifiers and sensitive values through diagnostic logging.
+- [#8149](https://github.com/apache/iceberg/pull/8149), commit
+  `e209f188f93acf53c34d43ededc40b9daeb040ba`, binds the schema before sanitization
+  so pushed-down numeric dates/timestamps retain their temporal meaning.
+- [#15224](https://github.com/apache/iceberg/pull/15224), commit
+  `45d2ed0e7ea7230c8f54f02d900c0c454b68cf9d`, introduced the pinned bound-set
+  regression: raw values are cast to `Literal<?>`, raising `ClassCastException`.
+  The public method catches it and sanitizes the unbound expression. The executed
+  `timestamp-long-set` fixture proves the resulting numeric/temporal mismatch.
+  Rust deliberately retains schema-aware temporal descriptions; it does not
+  reproduce that regression.
+
+The 85-case oracle fixes Java's visitor clock and runs its actual binder/visitor,
+with the same bound-to-unbound fallback as the public method. Complete normalized
+expressions are compared, including set predicates; the separate Rust delivery
+test confirms normal and COW consumers receive sanitized filters and Debug output.
+Set ordering and repeated sanitized members are normalized because Rust uses a
+set. Numeric magnitude, string hash, operator, reference, and temporal descriptions
+are compared exactly. Production time buckets use wall-clock time at report
+finalization. The fixed-clock comparison checks boundaries without a clock race.
+
+Java rejects NaN equality literals; unary NaN predicates are covered. Transform
+and variant terms have no Rust equivalent here. Binary/fixed fixtures correspond
+to Java heap ByteBuffers at position zero: Java hashes their `toString()` buffer
+description, not content bytes. The test does not establish parity for arbitrary
+Java buffer implementations/positions. The public API exposes neither raw filters
+nor a public sanitizer, serialized report schema, or construction API.
