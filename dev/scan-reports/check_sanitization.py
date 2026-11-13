@@ -26,7 +26,7 @@ import subprocess
 import sys
 
 JAVA_REVISION = "4e61757dcf568051a13bb8d4c00ef57c9f248947"
-PUBLIC_REVISION = "cc97a755404341966f380d6368648fa483890850"
+PUBLIC_REVISION = "7b261f9c6aaad03eb2fc8b23c48eca35eadcdc94"
 FIXTURE = "crates/iceberg/testdata/metrics/sanitized-filters.json"
 repo = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
 work = Path(sys.argv[1]).resolve()
@@ -78,6 +78,7 @@ try:
     env["CARGO_TARGET_DIR"] = str(repo / "target")
     run("rust-sanitizer", ["cargo", "test", "-p", "iceberg", "--lib", "--all-features", "metrics::filter::tests::test_sanitized_filters_against_pinned_java", "--", "--exact"], cwd=work / "rust", env=env)
     run("rust-delivery", ["cargo", "test", "-p", "iceberg", "--lib", "--all-features", "scan::tests::test_reports_sanitize_filters_before_delivery", "--", "--exact"], cwd=work / "rust", env=env)
+    run("rust-configuration", ["cargo", "test", "-p", "iceberg", "--lib", "--all-features", "scan::tests::test_reporter_precedence_and_noop", "--", "--exact"], cwd=work / "rust", env=env)
     assert not subprocess.check_output(["git", "status", "--porcelain"], cwd=work / "rust")
 finally:
     run("remove-rust-checkout", ["git", "worktree", "remove", str(work / "rust")])

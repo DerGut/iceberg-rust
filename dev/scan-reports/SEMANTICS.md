@@ -76,10 +76,10 @@ cannot be contained. Tests use explicit completion notifications and bounded
 timeouts, including a gated callback and a shut-down runtime.
 
 The table and scan store a reporter directly, defaulting to the private debug
-logger. Test-only setters establish inheritance, scan precedence, and custom
-no-op behavior. There is no `Option`, utility wrapper, or built-in disabling
-mode. The public follow-up exposes `with_metrics_reporter(Arc<dyn MetricsReporter>)`
-on tables and scan builders; a custom no-op consumer discards reports. Table
+logger. PR #1's tests inject consumers through the private planning seam; it has
+no table/scan setters. There is no `Option`, utility wrapper, or built-in disabling
+mode. The public follow-up adds `with_metrics_reporter(Arc<dyn MetricsReporter>)`
+on tables and scan builders, together with inheritance/precedence/no-op tests; a custom no-op consumer discards reports. Table
 configuration applies to that instance and its future clones; it is not persisted
 or inherited by independently loaded tables. Private report accessors return raw
 predicates; the public follow-up sanitizes them before delivery. The default

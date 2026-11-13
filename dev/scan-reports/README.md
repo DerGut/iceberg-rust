@@ -15,7 +15,7 @@ validation branch; they are not part of the public report API.
 Java: `4e61757dcf568051a13bb8d4c00ef57c9f248947`.
 Rust upstream baseline: `63d3d522c44aec588ebb7207834a37a141c3837a`.
 PR #1 has three commits on the parent branch: `9d03a810a` (planner behavior),
-`9f7bc1a78` (counting), and `980a56de2` (private async reporting with debug logging).
+`9f7bc1a78` (counting), and `beea97fbb` (private async reporting with debug logging).
 The planner prerequisite unifies worker results and completion, with controlled
 manifest-read failure and cancellation tests, unused delete-index failures, and
 dead-only manifest skipping for both scan and COW planning. The existing gated
@@ -200,8 +200,10 @@ adding a core enum variant. Callbacks return `()` and handle/log their own deliv
 failures. Guards deliberately forget caught panic payloads so their destructors cannot cause a second panic.
 They cannot contain blocking callbacks or aborting panics.
 
-Private configuration regressions cover table inheritance, scan replacement,
-custom no-op reporters, and clone/runtime preservation for normal and COW scans. Gated async callbacks establish that
+The public follow-up contains the table/scan setters and configuration regressions
+for inheritance, replacement, custom no-op reporters, and clone/runtime preservation
+in normal and COW scans. PR #1's delivery tests use the private planning seam.
+Gated async callbacks establish that
 successful EOF waits for delivery, consumer drop does not cancel an already
 started callback, and planning errors return without waiting. A shut-down runtime
 cancels delivery without hanging EOF, for both default logging and a custom
@@ -259,7 +261,7 @@ an installed tracing subscriber. Logging delivery overhead has not been measured
 ## Public filter sanitization follow-up
 
 The primary scan comparison above runs the private parent. A separate check pins
-[`scan-reports-2-public-api`](https://github.com/DerGut/iceberg-rust/tree/cc97a755404341966f380d6368648fa483890850)
+[`scan-reports-2-public-api`](https://github.com/DerGut/iceberg-rust/tree/7b261f9c6aaad03eb2fc8b23c48eca35eadcdc94)
 and compares its sanitizer regression assertions against actual Java output:
 
 ```sh
@@ -269,7 +271,8 @@ python3 dev/scan-reports/check_sanitization.py /tmp/iceberg-filter-sanitization
 It uses the same pinned Java revision, JDK requirements, and source Gradle wrapper.
 The script extracts the public commit's fixture inputs, invokes Java's production
 binder and sanitizer visitor, and reruns the public commit's Rust full-expression
-assertions plus its normal/COW delivery test in a detached temporary worktree.
+assertions, its normal/COW delivery test, and its reporter configuration test in
+a detached temporary worktree.
 Only Java's sanitizer clock is fixed through reflection. Binding and the public
 sanitizer's bound-to-unbound fallback are preserved. The helper does not call the
 public sanitizer method directly because that method has no injectable clock.
