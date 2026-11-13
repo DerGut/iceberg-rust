@@ -150,8 +150,8 @@ shared physical-file plans; Python does not fabricate unit tags for Rust.
 ## Results and limits
 
 The [archived run](evidence/manifest.json) captured Rust revision
-`5b81ea94e213b608e6b37b25bb06ce23629b6cdd`, including production revision
-`beea97fbb981d6f44afd401885d1843b0646e439`. Of 39 fixtures, 35 match every
+`05bb70015fdcc75666c72083f5f28616a85deaa1`, including production revision
+`04fac5769a61ca133f8dba9243d13618f7aa054d`. Of 39 fixtures, 35 match every
 compared field, counter, and plan. All schema IDs and projected field IDs/names
 match Java, including partial, empty-output, nested, filter-completed, metadata,
 and COW projections. Mismatched fixtures in this run: `writer-equality-pruning`, `writer-equality-association`, `close-after-one`, `cow-close-after-one`.

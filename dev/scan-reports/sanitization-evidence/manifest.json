@@ -1,7 +1,7 @@
 {
-  "public_revision": "7b261f9c6aaad03eb2fc8b23c48eca35eadcdc94",
+  "public_revision": "f5115fde63d09515d13900957bd63beadfe86836",
   "java_revision": "4e61757dcf568051a13bb8d4c00ef57c9f248947",
-  "harness_revision": "5b81ea94e213b608e6b37b25bb06ce23629b6cdd",
+  "harness_revision": "05bb70015fdcc75666c72083f5f28616a85deaa1",
   "harness_working_tree_patch": "",
   "fixture_sha256": "798677ee62696207ddc9f9a0e82ecd02e3aa3bd9187ee52f7d731f2ca611c85d",
   "runtime": {
@@ -64,7 +64,7 @@
         "--console=plain"
       ],
       "exit_status": 0,
-      "log_sha256": "3921928e72eaf3a433abc29f7adede693cc74585f120f6ce591aed08babafd0e"
+      "log_sha256": "64d4de76829d367e17ed6174cc0989e0a8e3939aa2e8375a2365e7d7da44eda6"
     },
     {
       "name": "rust-checkout",
@@ -73,11 +73,11 @@
         "worktree",
         "add",
         "--detach",
-        "/private/tmp/scan-setter-move/final-public-run/rust",
-        "7b261f9c6aaad03eb2fc8b23c48eca35eadcdc94"
+        "/private/tmp/scan-detached-delivery/public-run/rust",
+        "f5115fde63d09515d13900957bd63beadfe86836"
       ],
       "exit_status": 0,
-      "log_sha256": "9caeaa49480969276dff92bc36eb943b188b6c439d3f43596d275ac2a29baa36"
+      "log_sha256": "459a0584bc2200797f8513a2581d7080397f0f8125eb388e2a597d71a58d35ac"
     },
     {
       "name": "rust-sanitizer",
@@ -93,7 +93,7 @@
         "--exact"
       ],
       "exit_status": 0,
-      "log_sha256": "6f57dac5908cab09fd54caa2c2c6ab56b0ac532030aa6a5d9b8c27f271cf01af"
+      "log_sha256": "cabbd5d09024fb93eb6d1836107f1d6d5ce5376c8a946a4887d32a91b29c7fef"
     },
     {
       "name": "rust-delivery",
@@ -109,7 +109,7 @@
         "--exact"
       ],
       "exit_status": 0,
-      "log_sha256": "47abbdbe3490bced77ee1b6ff976bfdc1d71353a8cfc1cb3d1a1f76d3ccda4a3"
+      "log_sha256": "da8901a7d76069052ea1dbc576eecc8020e62ec9c83b97af4056d48ef1c43bfe"
     },
     {
       "name": "rust-configuration",
@@ -125,7 +125,7 @@
         "--exact"
       ],
       "exit_status": 0,
-      "log_sha256": "368296f497a325f30401e6265a15c1fa9e565f106fb0454bbdcb383f2e86b3e6"
+      "log_sha256": "27fcd381f4767ba94e3c721d4777f2bddbee52ed8346916bd81d86710eff8c8c"
     },
     {
       "name": "remove-rust-checkout",
@@ -133,7 +133,7 @@
         "git",
         "worktree",
         "remove",
-        "/private/tmp/scan-setter-move/final-public-run/rust"
+        "/private/tmp/scan-detached-delivery/public-run/rust"
       ],
       "exit_status": 0,
       "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -169,6 +169,6 @@
   ],
   "clock": "Java production visitor clock fixed through reflection; binding and bound-to-unbound fallback preserved",
   "rust_values": "Verified by the pinned regression test's full-expression assertions, not a separate Rust capture",
-  "command": "python3 dev/scan-reports/check_sanitization.py /private/tmp/scan-setter-move/final-public-run",
+  "command": "python3 dev/scan-reports/check_sanitization.py /private/tmp/scan-detached-delivery/public-run",
   "comparison_exit_status": 1
 }
