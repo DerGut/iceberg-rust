@@ -58,15 +58,17 @@ Every `MetricsReporter`, including the private default debug logger, receives an
 owned `MetricsReport::Scan` in one delivery task on the table's I/O runtime.
 Reporter configuration holds a direct `Arc<dyn MetricsReporter>`; a REST catalog reporter
 can be implemented and installed in its own crate without a core enum change.
-Each poll restores the originating tracing dispatcher. Successful EOF waits for
-that task to finish or be cancelled; early drop and planning errors do not wait
-for async delivery. The runtime must remain alive for delivery after termination,
-including default logging. Runtime shutdown or process termination can lose
-reports. Delivery is attempted at most once with no automatic retries; calls may
+Each poll restores the originating tracing dispatcher. Successful EOF, early
+drop, and planning errors do not wait for the callback. EOF still joins planning
+workers and finalizes their counters; delivery has no completion channel back to
+the stream. The runtime must remain alive for delivery after termination,
+including default logging and fully consumed scans. Runtime shutdown or process
+termination can lose reports. Consumers needing confirmation provide their own
+signal. Delivery is attempted at most once with no automatic retries; calls may
 overlap.
 
 The timer includes manifest-list I/O, consumer backpressure, and worker teardown,
-but excludes delivery. A slow callback still delays successful EOF. Callbacks
+but excludes delivery. Awaiting callback I/O does not hold EOF open. Callbacks
 return `()` and handle/log their own delivery failures; reporting cannot return a
 planning error. Callback unwinding panics are contained, including when
 finalization is already unwinding. Panic payloads are
@@ -96,7 +98,13 @@ in Rust; Java can evaluate them lazily.
 
 Java SnapshotScan.planFiles uses CloseableIterable.whenComplete: close invokes
 the report callback even after partial iteration or an iteration/close error.
-Rust also exposes these terminated operations, and waits for contributors to stop.
+The callback is synchronous during `close()`; iterator exhaustion alone does not
+invoke it. Java's `rest/RESTMetricsReporter.report` queues HTTP work on an executor,
+so close waits for submission rather than network delivery. Rust invokes its
+async callback independently of both EOF and drop; it does not promise delivery
+completion when planning returns. The public example demonstrates an explicit
+consumer acknowledgement. Rust also exposes terminated operations and waits for
+contributors to stop before finalizing counters.
 Neither implementation tags its report with an outcome. Java ParallelIterable.close
 requests cancellation without the same join barrier; scheduling and read-ahead
 can produce different partial counters. Do not infer numeric partial-report

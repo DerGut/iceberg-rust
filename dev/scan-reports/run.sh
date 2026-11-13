@@ -16,7 +16,7 @@
 set -euo pipefail
 repo=$(git rev-parse --show-toplevel)
 java_revision=4e61757dcf568051a13bb8d4c00ef57c9f248947
-production_revision=beea97fbb981d6f44afd401885d1843b0646e439
+production_revision=04fac5769a61ca133f8dba9243d13618f7aa054d
 work=${1:?Usage: bash dev/scan-reports/run.sh ABSOLUTE_OUTPUT_DIRECTORY}
 mkdir -p "$work/java"
 export SCAN_REPORT_OUTPUT="$work/results"

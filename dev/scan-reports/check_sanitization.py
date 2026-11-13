@@ -26,7 +26,7 @@ import subprocess
 import sys
 
 JAVA_REVISION = "4e61757dcf568051a13bb8d4c00ef57c9f248947"
-PUBLIC_REVISION = "7b261f9c6aaad03eb2fc8b23c48eca35eadcdc94"
+PUBLIC_REVISION = "f5115fde63d09515d13900957bd63beadfe86836"
 FIXTURE = "crates/iceberg/testdata/metrics/sanitized-filters.json"
 repo = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
 work = Path(sys.argv[1]).resolve()

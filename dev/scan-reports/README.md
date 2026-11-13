@@ -15,7 +15,7 @@ validation branch; they are not part of the public report API.
 Java: `4e61757dcf568051a13bb8d4c00ef57c9f248947`.
 Rust upstream baseline: `63d3d522c44aec588ebb7207834a37a141c3837a`.
 PR #1 has three commits on the parent branch: `9d03a810a` (planner behavior),
-`9f7bc1a78` (counting), and `beea97fbb` (private async reporting with debug logging).
+`9f7bc1a78` (counting), and `04fac5769` (private async reporting with debug logging).
 The planner prerequisite unifies worker results and completion, with controlled
 manifest-read failure and cancellation tests, unused delete-index failures, and
 dead-only manifest skipping for both scan and COW planning. The existing gated
@@ -193,7 +193,7 @@ including a panic payload whose destructor panics. Callback panics are contained
 without changing planning results. Finalization runs from `Drop` on the thread
 that releases the last owner, potentially during an existing unwind. Default
 debug logging and custom reporters share one async delivery path on the table
-I/O runtime, restoring the originating tracing dispatcher. Reporter storage is an
+I/O runtime, restoring the originating tracing dispatcher. Reporter storage is a
 direct `Arc<dyn MetricsReporter>`; catalog crates can supply their own implementations without
 adding a core enum variant. Callbacks return `()` and handle/log their own delivery
 failures. Guards deliberately forget caught panic payloads so their destructors cannot cause a second panic.
@@ -202,13 +202,15 @@ They cannot contain blocking callbacks or aborting panics.
 The public follow-up contains the table/scan setters and configuration regressions
 for inheritance, replacement, custom no-op reporters, and clone/runtime preservation
 in normal and COW scans. PR #1's delivery tests use the private planning seam.
-Gated async callbacks establish that
-successful EOF waits for delivery, consumer drop does not cancel an already
-started callback, and planning errors return without waiting. A shut-down runtime
+Gated async callbacks establish that normal and COW streams reach EOF while
+callbacks remain blocked, consumer drop does not cancel delivery, and planning
+errors return without waiting. Report assertions use explicit consumer signals;
+EOF is not a delivery-completion signal. A shut-down runtime
 cancels delivery without hanging EOF, for both default logging and a custom
 reporter. There is no built-in disabled state; a no-op consumer still receives
 a report. The differential exporter uses the private test seam. The separate
-public follow-up example exercises the public setters and read accessors.
+public follow-up example exercises the public setters and read accessors and
+waits on its own signal after planning a snapshot-bearing table.
 An unresolved report field name triggers a debug assertion and falls back to its
 numeric ID in release builds; Rust regression coverage checks both paths.
 These checks do not establish cancellation latency for a network storage
@@ -259,7 +261,7 @@ an installed tracing subscriber. Logging delivery overhead has not been measured
 ## Public filter sanitization follow-up
 
 The primary scan comparison above runs the private parent. A separate check pins
-[`scan-reports-2-public-api`](https://github.com/DerGut/iceberg-rust/tree/7b261f9c6aaad03eb2fc8b23c48eca35eadcdc94)
+[`scan-reports-2-public-api`](https://github.com/DerGut/iceberg-rust/tree/f5115fde63d09515d13900957bd63beadfe86836)
 and compares its sanitizer regression assertions against actual Java output:
 
 ```sh
