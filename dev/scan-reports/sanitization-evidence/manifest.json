@@ -1,0 +1,158 @@
+{
+  "public_revision": "cc97a755404341966f380d6368648fa483890850",
+  "java_revision": "4e61757dcf568051a13bb8d4c00ef57c9f248947",
+  "harness_revision": "541b7c1ecf7366b160ecc10a0ee989682751678d",
+  "harness_working_tree_patch": "",
+  "fixture_sha256": "798677ee62696207ddc9f9a0e82ecd02e3aa3bd9187ee52f7d731f2ca611c85d",
+  "runtime": {
+    "rustc": [
+      "rustc 1.97.0-nightly (e8e4541ff 2026-04-15)",
+      "binary: rustc",
+      "commit-hash: e8e4541ff19649d95afab52fdde2c2eaa6829965",
+      "commit-date: 2026-04-15",
+      "host: aarch64-apple-darwin",
+      "release: 1.97.0-nightly",
+      "LLVM version: 22.1.2"
+    ],
+    "cargo": [
+      "cargo 1.97.0-nightly (eb94155a9 2026-04-09)"
+    ],
+    "java": [
+      "openjdk version \"17.0.19\" 2026-04-21",
+      "OpenJDK Runtime Environment Temurin-17.0.19+10 (build 17.0.19+10)",
+      "OpenJDK 64-Bit Server VM Temurin-17.0.19+10 (build 17.0.19+10, mixed mode, sharing)"
+    ]
+  },
+  "checks": [
+    {
+      "name": "rustc-version",
+      "command": [
+        "rustc",
+        "-Vv"
+      ],
+      "exit_status": 0,
+      "log_sha256": "c163b1860e1f86f89492d3931bff8160cf8e86b3223916dd833b0c12ac48d550"
+    },
+    {
+      "name": "cargo-version",
+      "command": [
+        "cargo",
+        "-V"
+      ],
+      "exit_status": 0,
+      "log_sha256": "e43cc98c7807845c35fb0d78a16cf9766f46d280585b9ea4c637b20c82800599"
+    },
+    {
+      "name": "java-version",
+      "command": [
+        "java",
+        "-version"
+      ],
+      "exit_status": 0,
+      "log_sha256": "f43ea11778b05fbf56ed3de203d97b3c51c1bec66ae19af518ce358c34a95ea4"
+    },
+    {
+      "name": "java-capture",
+      "command": [
+        "./gradlew",
+        ":iceberg-core:test",
+        "--tests",
+        "org.apache.iceberg.TestRustFilterSanitization",
+        "-x",
+        "generateGitProperties",
+        "--rerun-tasks",
+        "--console=plain"
+      ],
+      "exit_status": 0,
+      "log_sha256": "e559d16080fcba3b9bf48dfdbfcc17298e1a282a26f9f6ae610e7c09cedaa8bf"
+    },
+    {
+      "name": "rust-checkout",
+      "command": [
+        "git",
+        "worktree",
+        "add",
+        "--detach",
+        "/private/tmp/scan-filter-sanitization-repro/rust",
+        "cc97a755404341966f380d6368648fa483890850"
+      ],
+      "exit_status": 0,
+      "log_sha256": "f09908c804158737078be0becdc3d88fb838b48feac576f54c5dfd3116ce7f39"
+    },
+    {
+      "name": "rust-sanitizer",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "iceberg",
+        "--lib",
+        "--all-features",
+        "metrics::filter::tests::test_sanitized_filters_against_pinned_java",
+        "--",
+        "--exact"
+      ],
+      "exit_status": 0,
+      "log_sha256": "c026aaf54a2f79c60c44f3b5b743dd1be37af3d10dc5be2d10b4e910e7abe822"
+    },
+    {
+      "name": "rust-delivery",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "iceberg",
+        "--lib",
+        "--all-features",
+        "scan::tests::test_reports_sanitize_filters_before_delivery",
+        "--",
+        "--exact"
+      ],
+      "exit_status": 0,
+      "log_sha256": "58306689963f449bbaaad1ba9f11396eee4fab1a3ea0a809c6f15f29b54c68c8"
+    },
+    {
+      "name": "remove-rust-checkout",
+      "command": [
+        "git",
+        "worktree",
+        "remove",
+        "/private/tmp/scan-filter-sanitization-repro/rust"
+      ],
+      "exit_status": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "gradle_wrapper": "distributionBase=GRADLE_USER_HOME\ndistributionPath=wrapper/dists\ndistributionSha256Sum=7988ed071b2a07900e2ec715fca15c6ab72bce6db433af301fa7fa7e9407bd24\ndistributionUrl=https\\://services.gradle.org/distributions/gradle-8.14.6-bin.zip\nnetworkTimeout=10000\nvalidateDistributionUrl=true\nzipStoreBase=GRADLE_USER_HOME\nzipStorePath=wrapper/dists\n",
+  "fixtures": 85,
+  "matches": 84,
+  "differences": [
+    {
+      "fixture": "timestamp-long-set",
+      "java": {
+        "type": "in",
+        "term": "value",
+        "values": [
+          "(16-digit-int)"
+        ]
+      },
+      "rust": {
+        "type": "in",
+        "term": "value",
+        "values": [
+          "(timestamp-7-days-ago)",
+          "(timestamp-8-days-ago)"
+        ]
+      },
+      "explanation": "Java 45d2ed0e (#15224) casts bound set values to Literal and throws ClassCastException. ExpressionUtil.sanitize falls back to unbound longs. Rust retains schema-bound timestamp descriptions, matching the earlier intended behavior."
+    }
+  ],
+  "normalization": "IN members are compared as sets; Rust deduplicates equal sanitized descriptions.",
+  "unsupported": [
+    "Java rejects NaN equality literals; is-nan and not-nan predicates are covered."
+  ],
+  "clock": "Java production visitor clock fixed through reflection; binding and bound-to-unbound fallback preserved",
+  "rust_values": "Verified by the pinned regression test's full-expression assertions, not a separate Rust capture",
+  "command": "python3 dev/scan-reports/check_sanitization.py /private/tmp/scan-filter-sanitization-repro",
+  "comparison_exit_status": 1
+}

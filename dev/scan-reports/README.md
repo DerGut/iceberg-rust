@@ -150,12 +150,12 @@ shared physical-file plans; Python does not fabricate unit tags for Rust.
 ## Results and limits
 
 The [archived run](evidence/manifest.json) captured Rust revision
-`9375ad567c763a798ca3381bcb96e445a7875d1f`, including production revision
-`e575d460d3bd8d80fc46e52e6688f9221bf19c46`. Of 39 fixtures, 36 match every
+`541b7c1ecf7366b160ecc10a0ee989682751678d`, including production revision
+`980a56de2def52603444eb5c285a3aae1ae6f4dc`. Of 39 fixtures, 35 match every
 compared field, counter, and plan. All schema IDs and projected field IDs/names
 match Java, including partial, empty-output, nested, filter-completed, metadata,
-and COW projections. The three mismatched fixtures are two existing equality-delete
-planning differences and one partial-close read-ahead case. Every mismatch is
+and COW projections. The four mismatched fixtures are two existing equality-delete
+planning differences and two partial-close read-ahead cases. Every mismatch is
 retained in [comparison.json](evidence/comparison.json).
 
 Of the 33 fully consumed fixtures (26 normal, seven COW), 31 match all compared
@@ -213,10 +213,9 @@ numeric ID in release builds; Rust regression coverage checks both paths.
 These checks do not establish cancellation latency for a network storage
 implementation.
 
-Six lifecycle fixtures exercise normal and COW planning; five match the
-compared counters and plans in this run. Normal close-after-one counts two files
-in Rust (6,006 bytes) versus one in Java (3,003 bytes); the COW counterpart counts
-one in both. Reports are delivered in all six lifecycle cases, including failures.
+Six lifecycle fixtures exercise normal and COW planning; four match the
+compared counters and plans in this run. Both normal and COW close-after-one
+count two files in Rust (6,006 bytes) versus one in Java (3,003 bytes). Reports are delivered in all six lifecycle cases, including failures.
 
 Partial counts depend on worker scheduling. Both close-after-one cases matched
 in the [preceding pinned run](https://github.com/DerGut/iceberg-rust/blob/d467bb6b2201e745b70457dc150473d6a532a3c6/dev/scan-reports/evidence/comparison.json).
