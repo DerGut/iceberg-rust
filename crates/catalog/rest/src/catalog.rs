@@ -49,7 +49,8 @@ use crate::auth::{
 use crate::client::{
     HttpClient, deserialize_catalog_response, deserialize_unexpected_catalog_error,
 };
-use crate::endpoint::{Endpoint, V1_NAMESPACE_EXISTS, V1_TABLE_EXISTS};
+use crate::endpoint::{Endpoint, V1_NAMESPACE_EXISTS, V1_REPORT_METRICS, V1_TABLE_EXISTS};
+use crate::metrics::RestMetricsReporter;
 use crate::request::HttpRequest;
 use crate::response::HttpResponse;
 use crate::types::{
@@ -664,6 +665,34 @@ impl RestCatalogClient {
             )),
         }
     }
+}
+
+fn configure_table_reporting(
+    client: &RestCatalogClient,
+    context: &SessionContext,
+    table: Table,
+) -> Table {
+    match rest_metrics_reporter(client, context, table.identifier()) {
+        Some(reporter) => table.with_metrics_reporter(Arc::new(reporter)),
+        None => table,
+    }
+}
+
+fn rest_metrics_reporter(
+    client: &RestCatalogClient,
+    context: &SessionContext,
+    table: &TableIdent,
+) -> Option<RestMetricsReporter> {
+    client
+        .endpoints
+        .contains(&*V1_REPORT_METRICS)
+        .then(|| RestMetricsReporter {
+            http_client: client.http_client.clone(),
+            auth_manager: client.auth_manager.clone(),
+            catalog_session: client.catalog_session.clone(),
+            context: context.clone(),
+            endpoint: format!("{}/metrics", client.config.table_endpoint(table)),
+        })
 }
 
 /// A [`Catalog`]-compatible façade over [`RestSessionCatalog`].
@@ -1354,11 +1383,12 @@ impl SessionCatalog for RestSessionCatalog {
             table_builder = table_builder.kms_client(kms_client);
         }
 
-        if let Some(metadata_location) = response.metadata_location {
+        let table = if let Some(metadata_location) = response.metadata_location {
             table_builder.metadata_location(metadata_location).build()
         } else {
             table_builder.build()
-        }
+        }?;
+        Ok(configure_table_reporting(client, context, table))
     }
 
     /// Load table from the catalog.
@@ -1456,6 +1486,8 @@ impl SessionCatalog for RestSessionCatalog {
         } else {
             table_builder.build()
         }?;
+
+        let table = configure_table_reporting(client, context, table);
 
         // A load racing a change to this table may cache the pre-change table;
         // the next load's `If-None-Match` check replaces it.
@@ -1601,7 +1633,11 @@ impl SessionCatalog for RestSessionCatalog {
         if let Some(kms_client) = self.kms_client.clone() {
             table_builder = table_builder.kms_client(kms_client);
         }
-        table_builder.build()
+        Ok(configure_table_reporting(
+            client,
+            context,
+            table_builder.build()?,
+        ))
     }
 
     async fn update_table(
@@ -1682,7 +1718,11 @@ impl SessionCatalog for RestSessionCatalog {
         if let Some(kms_client) = self.kms_client.clone() {
             table_builder = table_builder.kms_client(kms_client);
         }
-        table_builder.build()
+        Ok(configure_table_reporting(
+            client,
+            context,
+            table_builder.build()?,
+        ))
     }
 }
 
@@ -5535,5 +5575,825 @@ mod tests {
 
         config_mock.assert_async().await;
         list_ns_mock.assert_async().await;
+    }
+
+    #[derive(Debug)]
+    struct ChannelReporter(tokio::sync::mpsc::Sender<iceberg::metrics::MetricsReport>);
+
+    #[async_trait]
+    impl iceberg::metrics::MetricsReporter for ChannelReporter {
+        async fn report(&self, report: &iceberg::metrics::MetricsReport) {
+            self.0.send(report.clone()).await.unwrap();
+        }
+    }
+
+    async fn scan_report(table: &Table) -> iceberg::metrics::MetricsReport {
+        use futures::TryStreamExt;
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        table
+            .scan()
+            .with_metrics_reporter(Arc::new(ChannelReporter(sender)))
+            .build()
+            .unwrap()
+            .plan_files()
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
+    async fn reporting_table_body() -> (tempfile::TempDir, serde_json::Value) {
+        use iceberg::io::FileIO;
+        use iceberg::spec::{
+            DataContentType, DataFileBuilder, DataFileFormat, ManifestListWriter,
+            ManifestWriterBuilder,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let io = FileIO::new_with_fs();
+        let mut body = load_table_body("metrics");
+        let location = dir.path().to_str().unwrap();
+        body["metadata-location"] = json!(format!("{location}/metadata.json"));
+        body["metadata"]["location"] = json!(location);
+        body["metadata"]["format-version"] = json!(2);
+        body["metadata"]["last-sequence-number"] = json!(1);
+        body["metadata"]["snapshots"][0]["sequence-number"] = json!(1);
+        let list_path = format!("{location}/list.avro");
+        body["metadata"]["snapshots"][0]["manifest-list"] = json!(list_path);
+        let metadata: iceberg::spec::TableMetadata =
+            serde_json::from_value(body["metadata"].clone()).unwrap();
+        let snapshot_id = metadata.current_snapshot_id().unwrap();
+        let writer = |name: &str| {
+            ManifestWriterBuilder::new(
+                io.new_output(format!("{location}/{name}.avro")).unwrap(),
+                Some(snapshot_id),
+                metadata.current_schema().clone(),
+                metadata.default_partition_spec().as_ref().clone(),
+            )
+        };
+        let mut data = writer("data").build_v2_data();
+        for (name, size) in [("a", 42), ("b", 17)] {
+            data.add_file(
+                DataFileBuilder::default()
+                    .content(DataContentType::Data)
+                    .file_path(format!("{location}/{name}.parquet"))
+                    .file_format(DataFileFormat::Parquet)
+                    .file_size_in_bytes(size)
+                    .record_count(2)
+                    .build()
+                    .unwrap(),
+                0,
+            )
+            .unwrap();
+        }
+        let mut deletes = writer("deletes").build_v2_deletes();
+        deletes
+            .add_file(
+                DataFileBuilder::default()
+                    .content(DataContentType::EqualityDeletes)
+                    .file_path(format!("{location}/delete.parquet"))
+                    .file_format(DataFileFormat::Parquet)
+                    .file_size_in_bytes(11)
+                    .record_count(1)
+                    .equality_ids(Some(vec![1]))
+                    .build()
+                    .unwrap(),
+                1,
+            )
+            .unwrap();
+        let mut list = ManifestListWriter::v2(
+            io.new_output(&list_path).unwrap().writer().await.unwrap(),
+            snapshot_id,
+            None,
+            1,
+        );
+        list.add_manifests(
+            [
+                data.write_manifest_file().await.unwrap(),
+                deletes.write_manifest_file().await.unwrap(),
+            ]
+            .into_iter(),
+        )
+        .unwrap();
+        list.close().await.unwrap();
+        (dir, body)
+    }
+
+    async fn report_request_mock(
+        server: &mut ServerGuard,
+        path: &str,
+        session: Matcher,
+        count: usize,
+    ) -> (
+        Mock,
+        tokio::sync::mpsc::Receiver<(serde_json::Value, HeaderMap)>,
+    ) {
+        let (sender, receiver) = tokio::sync::mpsc::channel(16);
+        let mock = server
+            .mock("POST", path)
+            .match_header("content-type", "application/json")
+            .match_header("x-session-id", session)
+            .expect(count)
+            .with_status(204)
+            .with_body_from_request(move |request| {
+                sender
+                    .try_send((
+                        serde_json::from_slice(request.body().unwrap()).unwrap(),
+                        request.headers().clone(),
+                    ))
+                    .unwrap();
+                Vec::new()
+            })
+            .create_async()
+            .await;
+        (mock, receiver)
+    }
+
+    async fn receive_report(
+        receiver: &mut tokio::sync::mpsc::Receiver<(serde_json::Value, HeaderMap)>,
+    ) -> (serde_json::Value, HeaderMap) {
+        tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_rest_metrics_request_uses_scan_values_and_context() {
+        use futures::TryStreamExt;
+        use iceberg::expr::Reference;
+        use iceberg::spec::Datum;
+        let (dir, body) = reporting_table_body().await;
+        let mut server = Server::new_async().await;
+        let _config = server
+            .mock("GET", "/v1/config")
+            .with_status(200)
+            .with_body(r#"{"defaults":{},"overrides":{"prefix":"warehouse"}}"#)
+            .create_async()
+            .await;
+        let table_path = "/v1/warehouse/namespaces/ns1%1Fns2/tables/test1";
+        let load = server
+            .mock("GET", table_path)
+            .match_header("x-session-id", "alice")
+            .match_header("x-custom", "configured")
+            .match_header("x-client-default", "shared")
+            .with_status(200)
+            .with_body(body.to_string())
+            .create_async()
+            .await;
+        let (request, mut received) = report_request_mock(
+            &mut server,
+            &format!("{table_path}/metrics"),
+            "alice".into(),
+            1,
+        )
+        .await;
+        let mut headers = HeaderMap::new();
+        headers.insert("x-client-default", HeaderValue::from_static("shared"));
+        let config = RestCatalogConfig::builder()
+            .uri(server.url())
+            .props(HashMap::from([(
+                "header.x-custom".to_owned(),
+                "configured".to_owned(),
+            )]))
+            .client(Some(
+                Client::builder().default_headers(headers).build().unwrap(),
+            ))
+            .build();
+        let (mut catalog, seen) = context_catalog(config, false);
+        catalog.storage_factory = Some(Arc::new(LocalFsStorageFactory));
+        let context = SessionContext::builder()
+            .session_id("alice".to_owned())
+            .build();
+        let ident = TableIdent::from_strs(["ns1", "ns2", "test1"]).unwrap();
+        let table = catalog.load_table(&context, &ident).await.unwrap();
+        let filter = Reference::new("data")
+            .equal_to(Datum::string("true"))
+            .and(Reference::new("id").greater_than(Datum::int(12345)));
+        let files = table
+            .scan()
+            .select(["data"])
+            .with_filter(filter)
+            .build()
+            .unwrap()
+            .plan_files()
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        assert_eq!(
+            files
+                .iter()
+                .map(|file| file.deletes().len())
+                .collect::<Vec<_>>(),
+            vec![1, 1]
+        );
+        let (actual, headers) = receive_report(&mut received).await;
+        assert_eq!(
+            (
+                headers["x-session-id"].to_str().unwrap(),
+                headers["x-custom"].to_str().unwrap(),
+                headers["x-client-default"].to_str().unwrap()
+            ),
+            ("alice", "configured", "shared")
+        );
+        let duration = actual["metrics"]["total-planning-duration"]["total-duration"]
+            .as_i64()
+            .unwrap();
+        assert!(duration > 0);
+        let mut expected: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/scan_report_request.json")).unwrap();
+        expected["metrics"]["total-planning-duration"]["total-duration"] = json!(duration);
+        assert_eq!(actual, expected);
+        assert_eq!(*seen.lock().unwrap(), vec!["alice", "alice"]);
+        load.assert_async().await;
+        request.assert_async().await;
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn test_rest_metrics_survive_table_load_and_update_paths() {
+        use futures::TryStreamExt;
+        let (_dir, body) = reporting_table_body().await;
+        let mut server = Server::new_async().await;
+        let _config = create_config_mock(&mut server).await;
+        let path = "/v1/namespaces/ns1/tables/test1";
+        let _load = server
+            .mock("GET", path)
+            .match_header("if-none-match", Matcher::Missing)
+            .with_status(200)
+            .with_header("etag", "\"v1\"")
+            .with_body(body.to_string())
+            .expect(2)
+            .create_async()
+            .await;
+        let cached = server
+            .mock("GET", path)
+            .match_header("if-none-match", "\"v1\"")
+            .with_status(304)
+            .expect(2)
+            .create_async()
+            .await;
+        let create = server
+            .mock("POST", "/v1/namespaces/ns1/tables")
+            .with_status(200)
+            .with_body(body.to_string())
+            .create_async()
+            .await;
+        let register = server
+            .mock("POST", "/v1/namespaces/ns1/register")
+            .with_status(200)
+            .with_body(body.to_string())
+            .create_async()
+            .await;
+        let update = server
+            .mock("POST", path)
+            .with_status(200)
+            .with_body(
+                json!({
+                    "metadata-location":body["metadata-location"], "metadata":body["metadata"]
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+        let (reports, mut received) =
+            report_request_mock(&mut server, &format!("{path}/metrics"), Matcher::Any, 7).await;
+        let (mut catalog, _) = context_catalog(
+            RestCatalogConfig::builder().uri(server.url()).build(),
+            false,
+        );
+        catalog.storage_factory = Some(Arc::new(LocalFsStorageFactory));
+        let context = SessionContext::builder()
+            .session_id("alice".to_owned())
+            .build();
+        let other = SessionContext::builder()
+            .session_id("bob".to_owned())
+            .build();
+        let ident = test_table_ident();
+        let first = catalog.load_table(&context, &ident).await.unwrap();
+        let cached_table = catalog.load_table(&context, &ident).await.unwrap();
+        let other_table = catalog.load_table(&other, &ident).await.unwrap();
+        let created = catalog
+            .create_table(
+                &context,
+                ident.namespace(),
+                TableCreation::builder()
+                    .name(ident.name().to_owned())
+                    .schema(first.metadata().current_schema().as_ref().clone())
+                    .build(),
+            )
+            .await
+            .unwrap();
+        let registered = catalog
+            .register_table(
+                &context,
+                &ident,
+                body["metadata-location"].as_str().unwrap().to_owned(),
+            )
+            .await
+            .unwrap();
+        let bound = RestCatalog::from_session_catalog(other.clone(), Arc::new(catalog));
+        let tx = Transaction::new(&other_table);
+        let updated = tx
+            .update_table_properties()
+            .set("metrics-test".to_owned(), "updated".to_owned())
+            .apply(tx)
+            .unwrap()
+            .commit(&bound)
+            .await
+            .unwrap();
+        drop(bound);
+        for (table, session) in [
+            (first.clone(), "alice"),
+            (first, "alice"),
+            (cached_table, "alice"),
+            (other_table, "bob"),
+            (created, "alice"),
+            (registered, "alice"),
+            (updated, "bob"),
+        ] {
+            table
+                .scan()
+                .build()
+                .unwrap()
+                .plan_files()
+                .await
+                .unwrap()
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap();
+            let (report, headers) = receive_report(&mut received).await;
+            assert_eq!(
+                (
+                    report["table-name"].as_str().unwrap(),
+                    headers["x-session-id"].to_str().unwrap()
+                ),
+                ("ns1.test1", session)
+            );
+        }
+        assert!(received.try_recv().is_err());
+        reports.assert_async().await;
+        cached.assert_async().await;
+        create.assert_async().await;
+        register.assert_async().await;
+        update.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_rest_metrics_status_handling_has_no_retries() {
+        use iceberg::metrics::MetricsReporter;
+        let (_dir, body) = reporting_table_body().await;
+        for status in [204, 400, 401, 403, 404, 405, 429, 500, 501, 503] {
+            let mut server = Server::new_async().await;
+            let _config = create_config_mock(&mut server).await;
+            let _load = server
+                .mock("GET", "/v1/namespaces/ns1/tables/test1")
+                .with_status(200)
+                .with_body(body.to_string())
+                .create_async()
+                .await;
+            let reports = server
+                .mock("POST", "/v1/namespaces/ns1/tables/test1/metrics")
+                .with_status(status)
+                .with_body("not a JSON error")
+                .expect(2)
+                .create_async()
+                .await;
+            let catalog = session_catalog(RestCatalogConfig::builder().uri(server.url()).build());
+            let context = SessionContext::empty();
+            let table = catalog
+                .load_table(&context, &test_table_ident())
+                .await
+                .unwrap();
+            let reporter = rest_metrics_reporter(
+                catalog.client().await.unwrap(),
+                &context,
+                table.identifier(),
+            )
+            .unwrap();
+            for _ in 0..2 {
+                reporter.report(&scan_report(&table).await).await;
+            }
+            reports.assert_async().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rest_metrics_capability_and_custom_reporter_override() {
+        use futures::TryStreamExt;
+        for advertised in [
+            None,
+            Some(vec![]),
+            Some(vec![
+                "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+            ]),
+            Some(vec![
+                "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/metrics",
+            ]),
+        ] {
+            let mut server = Server::new_async().await;
+            let mut config = json!({"defaults":{},"overrides":{}});
+            if let Some(endpoints) = &advertised {
+                config["endpoints"] = json!(endpoints);
+            }
+            let _config = server
+                .mock("GET", "/v1/config")
+                .with_status(200)
+                .with_body(config.to_string())
+                .create_async()
+                .await;
+            let catalog = session_catalog(RestCatalogConfig::builder().uri(server.url()).build());
+            let reporter = rest_metrics_reporter(
+                catalog.client().await.unwrap(),
+                &SessionContext::empty(),
+                &test_table_ident(),
+            );
+            assert_eq!(
+                reporter.is_some(),
+                advertised
+                    .as_ref()
+                    .is_none_or(|v| v.is_empty() || v[0].contains("metrics"))
+            );
+        }
+        let (_dir, body) = reporting_table_body().await;
+        let mut server = Server::new_async().await;
+        let _config = create_config_mock(&mut server).await;
+        let _load = server
+            .mock("GET", "/v1/namespaces/ns1/tables/test1")
+            .with_status(200)
+            .with_body(body.to_string())
+            .create_async()
+            .await;
+        let reports = server
+            .mock("POST", "/v1/namespaces/ns1/tables/test1/metrics")
+            .expect(0)
+            .create_async()
+            .await;
+        let catalog = session_catalog(RestCatalogConfig::builder().uri(server.url()).build());
+        let table = catalog
+            .load_table(&SessionContext::empty(), &test_table_ident())
+            .await
+            .unwrap();
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        let table = table.with_metrics_reporter(Arc::new(ChannelReporter(sender)));
+        table
+            .clone()
+            .scan()
+            .build()
+            .unwrap()
+            .plan_files()
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        scan_report(&table).await;
+        assert!(receiver.try_recv().is_err());
+        reports.assert_async().await;
+    }
+
+    #[derive(Debug)]
+    struct GatedMetricsAuth {
+        entered: tokio::sync::mpsc::Sender<tokio::sync::oneshot::Receiver<()>>,
+        release: tokio::sync::Semaphore,
+    }
+
+    #[async_trait]
+    impl AuthManager for GatedMetricsAuth {
+        async fn init_session(
+            &self,
+            client: &HttpClient,
+            props: &HashMap<String, String>,
+        ) -> Result<Box<dyn AuthSession>> {
+            NoopAuthManager.init_session(client, props).await
+        }
+
+        async fn catalog_session(
+            &self,
+            client: &HttpClient,
+            props: &HashMap<String, String>,
+        ) -> Result<Arc<dyn AuthSession>> {
+            NoopAuthManager.catalog_session(client, props).await
+        }
+
+        async fn contextual_session(
+            &self,
+            _context: &SessionContext,
+            catalog_session: Arc<dyn AuthSession>,
+        ) -> Result<Arc<dyn AuthSession>> {
+            let (_finished, receiver) = tokio::sync::oneshot::channel();
+            self.entered.try_send(receiver).unwrap();
+            self.release.acquire().await.unwrap().forget();
+            Ok(catalog_session)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rest_metrics_concurrent_delivery_and_auth_timeout() {
+        use iceberg::metrics::MetricsReporter;
+        let (_dir, body) = reporting_table_body().await;
+        for release in [true, false] {
+            let mut server = Server::new_async().await;
+            let _config = create_config_mock(&mut server).await;
+            let _load = server
+                .mock("GET", "/v1/namespaces/ns1/tables/test1")
+                .with_status(200)
+                .with_body(body.to_string())
+                .create_async()
+                .await;
+            let requests = server
+                .mock("POST", "/v1/namespaces/ns1/tables/test1/metrics")
+                .with_status(204)
+                .expect(if release { 12 } else { 0 })
+                .create_async()
+                .await;
+            let catalog = session_catalog(RestCatalogConfig::builder().uri(server.url()).build());
+            let context = SessionContext::empty();
+            let table = catalog
+                .load_table(&context, &test_table_ident())
+                .await
+                .unwrap();
+            let mut reports = Vec::new();
+            for _ in 0..12 {
+                reports.push(scan_report(&table).await);
+            }
+            let (entered, mut receiver) = tokio::sync::mpsc::channel(12);
+            let auth_manager = Arc::new(GatedMetricsAuth {
+                entered,
+                release: tokio::sync::Semaphore::new(0),
+            });
+            let reporter = Arc::new(RestMetricsReporter {
+                auth_manager: auth_manager.clone(),
+                ..rest_metrics_reporter(
+                    catalog.client().await.unwrap(),
+                    &context,
+                    table.identifier(),
+                )
+                .unwrap()
+            });
+            if !release {
+                tokio::time::pause();
+            }
+            let mut deliveries = Vec::new();
+            for report in reports {
+                let reporter = reporter.clone();
+                deliveries.push(tokio::spawn(async move {
+                    reporter.report(&report).await;
+                }));
+            }
+            let mut auth_calls = Vec::new();
+            for _ in 0..12 {
+                auth_calls.push(
+                    tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+                        .await
+                        .unwrap()
+                        .unwrap(),
+                );
+            }
+            assert!(deliveries.iter().all(|delivery| !delivery.is_finished()));
+            if release {
+                auth_manager.release.add_permits(12);
+            } else {
+                let cancelled = deliveries.pop().unwrap();
+                cancelled.abort();
+                assert!(cancelled.await.unwrap_err().is_cancelled());
+                tokio::time::advance(Duration::from_secs(5)).await;
+            }
+            for delivery in deliveries {
+                tokio::time::timeout(Duration::from_secs(10), delivery)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            }
+            for call in auth_calls {
+                assert!(call.await.is_err());
+            }
+            if !release {
+                tokio::time::resume();
+            }
+            requests.assert_async().await;
+        }
+    }
+
+    #[derive(Debug)]
+    struct SignallingMetricsReporter {
+        reporter: RestMetricsReporter,
+        finished: tokio::sync::Notify,
+    }
+
+    #[async_trait]
+    impl iceberg::metrics::MetricsReporter for SignallingMetricsReporter {
+        async fn report(&self, report: &iceberg::metrics::MetricsReport) {
+            self.reporter.report(report).await;
+            self.finished.notify_one();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rest_metrics_http_body_timeout_does_not_stall_planning() {
+        use futures::TryStreamExt;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (_dir, body) = reporting_table_body().await;
+        let mut server = Server::new_async().await;
+        let _config = create_config_mock(&mut server).await;
+        let _load = server
+            .mock("GET", "/v1/namespaces/ns1/tables/test1")
+            .with_status(200)
+            .with_body(body.to_string())
+            .create_async()
+            .await;
+        let catalog = session_catalog(RestCatalogConfig::builder().uri(server.url()).build());
+        let context = SessionContext::empty();
+        let table = catalog
+            .load_table(&context, &test_table_ident())
+            .await
+            .unwrap();
+        let original = rest_metrics_reporter(
+            catalog.client().await.unwrap(),
+            &context,
+            table.identifier(),
+        )
+        .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let reporter = Arc::new(SignallingMetricsReporter {
+            reporter: RestMetricsReporter {
+                endpoint: format!("http://{}/metrics", listener.local_addr().unwrap()),
+                ..original
+            },
+            finished: tokio::sync::Notify::new(),
+        });
+        let (entered, received) = tokio::sync::oneshot::channel();
+        let response = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(socket.read_u8().await.unwrap());
+            }
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nx")
+                .await
+                .unwrap();
+            entered.send(()).unwrap();
+            futures::future::pending::<()>().await;
+            drop(socket);
+        });
+        let table = table.with_metrics_reporter(reporter.clone());
+        let files = tokio::time::timeout(Duration::from_secs(1), async {
+            table
+                .scan()
+                .build()
+                .unwrap()
+                .plan_files()
+                .await
+                .unwrap()
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(files.len(), 2);
+        tokio::time::timeout(Duration::from_secs(1), received)
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(5)).await;
+        tokio::time::timeout(Duration::from_secs(1), reporter.finished.notified())
+            .await
+            .unwrap();
+        response.abort();
+        assert!(response.await.unwrap_err().is_cancelled());
+    }
+
+    #[test]
+    fn test_rest_metrics_runtime_shutdown_cancels_delivery() {
+        use futures::TryStreamExt;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (_dir, _reporter, mut auth_call) = runtime.block_on(async {
+            let (dir, body) = reporting_table_body().await;
+            let mut server = Server::new_async().await;
+            let _config = create_config_mock(&mut server).await;
+            let _load = server
+                .mock("GET", "/v1/namespaces/ns1/tables/test1")
+                .with_status(200)
+                .with_body(body.to_string())
+                .create_async()
+                .await;
+            let catalog = session_catalog(RestCatalogConfig::builder().uri(server.url()).build());
+            let context = SessionContext::empty();
+            let table = catalog
+                .load_table(&context, &test_table_ident())
+                .await
+                .unwrap();
+            let original = rest_metrics_reporter(
+                catalog.client().await.unwrap(),
+                &context,
+                table.identifier(),
+            )
+            .unwrap();
+            let (entered, mut receiver) = tokio::sync::mpsc::channel(1);
+            let reporter = Arc::new(RestMetricsReporter {
+                auth_manager: Arc::new(GatedMetricsAuth {
+                    entered,
+                    release: tokio::sync::Semaphore::new(0),
+                }),
+                ..original
+            });
+            table
+                .with_metrics_reporter(reporter.clone())
+                .scan()
+                .build()
+                .unwrap()
+                .plan_files()
+                .await
+                .unwrap()
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap();
+            let mut call = tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(matches!(
+                call.try_recv(),
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+            ));
+            (dir, reporter, call)
+        });
+        drop(runtime);
+        assert!(matches!(
+            auth_call.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_rest_metrics_uses_catalog_oauth_and_header_precedence() {
+        use iceberg::metrics::MetricsReporter;
+        let (_dir, body) = reporting_table_body().await;
+        for override_auth in [None, Some("Basic override")] {
+            let mut server = Server::new_async().await;
+            let expected = override_auth.unwrap_or("Bearer catalog-token");
+            let _config = server
+                .mock("GET", "/v1/config")
+                .match_header("authorization", expected)
+                .with_status(200)
+                .with_body(r#"{"defaults":{},"overrides":{}}"#)
+                .create_async()
+                .await;
+            let _load = server
+                .mock("GET", "/v1/namespaces/ns1/tables/test1")
+                .match_header("authorization", expected)
+                .with_status(200)
+                .with_body(body.to_string())
+                .create_async()
+                .await;
+            let request = server
+                .mock("POST", "/v1/namespaces/ns1/tables/test1/metrics")
+                .match_header("authorization", expected)
+                .with_status(204)
+                .create_async()
+                .await;
+            let mut props = HashMap::from([
+                ("token".to_owned(), "catalog-token".to_owned()),
+                (REST_CATALOG_PROP_AUTH_TYPE.to_owned(), "oauth2".to_owned()),
+            ]);
+            if let Some(value) = override_auth {
+                props.insert("header.authorization".to_owned(), value.to_owned());
+            }
+            let catalog = session_catalog(
+                RestCatalogConfig::builder()
+                    .uri(server.url())
+                    .props(props)
+                    .build(),
+            );
+            let context = SessionContext::empty();
+            let table = catalog
+                .load_table(&context, &test_table_ident())
+                .await
+                .unwrap();
+            let reporter = rest_metrics_reporter(
+                catalog.client().await.unwrap(),
+                &context,
+                table.identifier(),
+            )
+            .unwrap();
+            reporter.report(&scan_report(&table).await).await;
+            request.assert_async().await;
+        }
     }
 }
