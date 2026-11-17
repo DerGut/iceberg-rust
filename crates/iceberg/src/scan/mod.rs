@@ -488,7 +488,9 @@ impl TableScan {
         // used to stream the planned data file results back to the caller
         let (planned_file_tx, planned_file_rx) = channel(concurrency_limit_manifest_entries);
 
-        let (delete_file_idx, delete_file_tx) = DeleteFileIndex::new(self.runtime.clone());
+        let (delete_file_idx, delete_file_tx, index_worker) =
+            DeleteFileIndex::new(self.runtime.clone());
+        let mut workers = vec![index_worker];
 
         let manifest_list = plan_context.get_manifest_list().await?;
 
@@ -509,7 +511,7 @@ impl TableScan {
         let rt = self.runtime.clone();
 
         // Concurrently load all [`Manifest`]s and stream their [`ManifestEntry`]s
-        rt.io().spawn(async move {
+        let worker = rt.io().spawn(async move {
             let result = futures::stream::iter(manifest_file_contexts)
                 .try_for_each_concurrent(concurrency_limit_manifest_files, |ctx| async move {
                     ctx.fetch_manifest_and_stream_manifest_entries().await
@@ -520,12 +522,13 @@ impl TableScan {
                 let _ = channel_for_manifest_error.send(Err(error)).await;
             }
         });
+        workers.push(worker.abort_on_drop());
 
         // Process the delete file [`ManifestEntry`] stream in parallel
         {
             let rt = rt.clone();
             let rt_inner = rt.clone();
-            rt.cpu().spawn(async move {
+            let worker = rt.cpu().spawn(async move {
                 let result = manifest_entry_delete_ctx_rx
                     .map(|me_ctx| Ok((me_ctx, delete_file_tx.clone())))
                     .try_for_each_concurrent(
@@ -542,6 +545,7 @@ impl TableScan {
                                         )
                                         .await
                                     })
+                                    .abort_on_drop()
                                     .await?
                             }
                         },
@@ -554,12 +558,13 @@ impl TableScan {
                         .await;
                 }
             });
+            workers.push(worker.abort_on_drop());
         }
 
         // Process the data file [`ManifestEntry`] stream in parallel
         {
             let rt_inner = rt.clone();
-            rt.cpu().spawn(async move {
+            let worker = rt.cpu().spawn(async move {
                 let result = manifest_entry_data_ctx_rx
                     .map(|me_ctx| Ok((me_ctx, planned_file_tx.clone())))
                     .try_for_each_concurrent(
@@ -577,6 +582,7 @@ impl TableScan {
                                         )
                                         .await
                                     })
+                                    .abort_on_drop()
                                     .await?
                             }
                         },
@@ -587,9 +593,17 @@ impl TableScan {
                     let _ = channel_for_data_manifest_entry_error.send(Err(error)).await;
                 }
             });
+            workers.push(worker.abort_on_drop());
         }
 
-        Ok(planned_file_rx.boxed())
+        Ok(futures::stream::unfold(
+            (planned_file_rx, workers),
+            |(mut tasks, workers)| async move {
+                tasks.next().await.map(|task| (task, (tasks, workers)))
+            },
+        )
+        .fuse()
+        .boxed())
     }
 
     /// Returns an [`ArrowRecordBatchStream`] using the supplied reader settings.
@@ -761,7 +775,7 @@ mod tests {
         Array, ArrayRef, BooleanArray, Float64Array, Int32Array, Int64Array, RecordBatch, RunArray,
         StringArray,
     };
-    use futures::{TryStreamExt, stream};
+    use futures::{StreamExt, TryStreamExt, stream};
     use parquet::arrow::ArrowWriter;
     use uuid::Uuid;
 
@@ -1843,10 +1857,9 @@ mod tests {
         // Create table scan for current snapshot and plan files
         let table_scan = fixture.table.scan().build().unwrap();
 
-        let mut tasks = table_scan
-            .plan_files()
-            .await
-            .unwrap()
+        let mut stream = table_scan.plan_files().await.unwrap();
+        let mut tasks = stream
+            .by_ref()
             .try_fold(vec![], |mut acc, task| async move {
                 acc.push(task);
                 Ok(acc)
@@ -1854,6 +1867,7 @@ mod tests {
             .await
             .unwrap();
 
+        assert!(stream.next().await.is_none());
         assert_eq!(tasks.len(), 2);
 
         tasks.sort_by_key(|t| t.data_file_path().to_string());
@@ -4237,5 +4251,64 @@ mod tests {
             })
             .collect();
         assert_eq!(y, (1100..1200).collect::<Vec<i64>>());
+    }
+
+    async fn gated_manifest_scan() -> (
+        TableScan,
+        Arc<crate::arrow::caching_delete_file_loader::tests::gated_storage::ReadGate>,
+    ) {
+        let mut fixture = TableTestFixture::new();
+        fixture.setup_deadlock_manifests().await;
+        let mut scan = fixture
+            .table
+            .scan()
+            .with_concurrency_limit(1)
+            .build()
+            .unwrap();
+        let context = scan.plan_context.as_mut().unwrap();
+        let manifests = context.get_manifest_list().await.unwrap();
+        let gate = Arc::new(
+            crate::arrow::caching_delete_file_loader::tests::gated_storage::ReadGate::default(),
+        );
+        let storage =
+            crate::arrow::caching_delete_file_loader::tests::gated_storage::GatedStorageFactory {
+                path: manifests
+                    .entries()
+                    .iter()
+                    .find(|m| m.content == crate::spec::ManifestContentType::Deletes)
+                    .unwrap()
+                    .manifest_path
+                    .clone(),
+                gate: gate.clone(),
+            };
+        context.object_cache = Arc::new(crate::io::object_cache::ObjectCache::new(
+            crate::io::FileIOBuilder::new(Arc::new(storage)).build(),
+            None,
+        ));
+        (scan, gate)
+    }
+
+    #[tokio::test]
+    async fn test_drop_plan_cancels_pending_manifest_read() {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let (scan, gate) = gated_manifest_scan().await;
+            for cow in [false, true] {
+                let mut stream = if cow {
+                    scan.plan_cow_rewrite_files()
+                        .await
+                        .unwrap()
+                        .map_ok(|file| file.scan_task)
+                        .boxed()
+                } else {
+                    scan.plan_files().await.unwrap()
+                };
+                gate.started.notified().await;
+                assert!(futures::poll!(stream.next()).is_pending());
+                drop(stream);
+                gate.stopped.notified().await;
+            }
+        })
+        .await
+        .unwrap();
     }
 }

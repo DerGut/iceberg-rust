@@ -25,7 +25,7 @@ use tokio::sync::Notify;
 
 use crate::error::invalid_data;
 use crate::metadata_columns::RESERVED_FIELD_ID_DELETE_FILE_PATH;
-use crate::runtime::Runtime;
+use crate::runtime::{AbortOnDropHandle, Runtime};
 use crate::scan::{DeleteFileContext, FileScanTaskDeleteFile};
 use crate::spec::{DataContentType, DataFile, DataFileFormat, PrimitiveLiteral, Struct};
 use crate::{Error, Result};
@@ -102,8 +102,14 @@ fn clone_failed_index_error(err: &Error) -> Error {
 }
 
 impl DeleteFileIndex {
-    /// create a new `DeleteFileIndex` along with the sender that populates it with delete files
-    pub(crate) fn new(runtime: Runtime) -> (DeleteFileIndex, Sender<DeleteFileContext>) {
+    /// Creates an index, its input sender, and the abort-on-drop worker that populates it.
+    pub(crate) fn new(
+        runtime: Runtime,
+    ) -> (
+        DeleteFileIndex,
+        Sender<DeleteFileContext>,
+        AbortOnDropHandle<()>,
+    ) {
         // TODO: what should the channel limit be?
         let (tx, rx) = channel(10);
         let notify = Arc::new(Notify::new());
@@ -112,7 +118,7 @@ impl DeleteFileIndex {
         )));
         let delete_file_stream = rx.boxed();
 
-        runtime.io().spawn({
+        let worker = runtime.io().spawn({
             let state = state.clone();
             async move {
                 let delete_files: Vec<DeleteFileContext> =
@@ -131,7 +137,7 @@ impl DeleteFileIndex {
             }
         });
 
-        (DeleteFileIndex { state }, tx)
+        (DeleteFileIndex { state }, tx, worker.abort_on_drop())
     }
 
     /// Gets all the delete files that apply to the specified data file.
@@ -1290,7 +1296,7 @@ mod tests {
         let dv_1 = build_deletion_vector(data_file.file_path(), &partition, spec_id);
         let dv_2 = build_deletion_vector(data_file.file_path(), &partition, spec_id);
 
-        let (index, mut tx) = DeleteFileIndex::new(Runtime::current());
+        let (index, mut tx, _worker) = DeleteFileIndex::new(Runtime::current());
         tx.try_send(DeleteFileContext {
             manifest_entry: build_added_manifest_entry(5, &dv_1).into(),
             partition_spec_id: spec_id,
