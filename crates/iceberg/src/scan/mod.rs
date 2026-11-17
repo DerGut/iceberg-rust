@@ -488,7 +488,9 @@ impl TableScan {
         // used to stream the planned data file results back to the caller
         let (planned_file_tx, planned_file_rx) = channel(concurrency_limit_manifest_entries);
 
-        let (delete_file_idx, delete_file_tx) = DeleteFileIndex::new(self.runtime.clone());
+        let (delete_file_idx, delete_file_tx, index_worker) =
+            DeleteFileIndex::new(self.runtime.clone());
+        let mut workers = vec![index_worker];
 
         let manifest_list = plan_context.get_manifest_list().await?;
 
@@ -509,7 +511,7 @@ impl TableScan {
         let rt = self.runtime.clone();
 
         // Concurrently load all [`Manifest`]s and stream their [`ManifestEntry`]s
-        rt.io().spawn(async move {
+        let worker = rt.io().spawn(async move {
             let result = futures::stream::iter(manifest_file_contexts)
                 .try_for_each_concurrent(concurrency_limit_manifest_files, |ctx| async move {
                     ctx.fetch_manifest_and_stream_manifest_entries().await
@@ -520,12 +522,13 @@ impl TableScan {
                 let _ = channel_for_manifest_error.send(Err(error)).await;
             }
         });
+        workers.push(worker);
 
         // Process the delete file [`ManifestEntry`] stream in parallel
         {
             let rt = rt.clone();
             let rt_inner = rt.clone();
-            rt.cpu().spawn(async move {
+            let worker = rt.cpu().spawn(async move {
                 let result = manifest_entry_delete_ctx_rx
                     .map(|me_ctx| Ok((me_ctx, delete_file_tx.clone())))
                     .try_for_each_concurrent(
@@ -554,12 +557,13 @@ impl TableScan {
                         .await;
                 }
             });
+            workers.push(worker);
         }
 
         // Process the data file [`ManifestEntry`] stream in parallel
         {
             let rt_inner = rt.clone();
-            rt.cpu().spawn(async move {
+            let worker = rt.cpu().spawn(async move {
                 let result = manifest_entry_data_ctx_rx
                     .map(|me_ctx| Ok((me_ctx, planned_file_tx.clone())))
                     .try_for_each_concurrent(
@@ -587,9 +591,13 @@ impl TableScan {
                     let _ = channel_for_data_manifest_entry_error.send(Err(error)).await;
                 }
             });
+            workers.push(worker);
         }
 
-        Ok(planned_file_rx.boxed())
+        let worker_errors = futures::stream::once(futures::future::try_join_all(workers))
+            .filter_map(|result| std::future::ready(result.err().map(Err)));
+        // Drain bounded output while waiting for workers that may be sending to it.
+        Ok(futures::stream::select(planned_file_rx, worker_errors).boxed())
     }
 
     /// Returns an [`ArrowRecordBatchStream`] using the supplied reader settings.
@@ -761,7 +769,7 @@ mod tests {
         Array, ArrayRef, BooleanArray, Float64Array, Int32Array, Int64Array, RecordBatch, RunArray,
         StringArray,
     };
-    use futures::{TryStreamExt, stream};
+    use futures::{StreamExt, TryStreamExt, stream};
     use parquet::arrow::ArrowWriter;
     use uuid::Uuid;
 
@@ -4171,6 +4179,96 @@ mod tests {
         assert!(!pos.contains(&150) && !pos.contains(&299), "got {pos:?}");
         let expected: Vec<i64> = (0..150).chain(151..299).collect();
         assert_eq!(pos, expected);
+    }
+
+    #[tokio::test]
+    async fn test_plan_reports_only_the_entry_error_when_planning_stops_early() {
+        let mut fixture = TableTestFixture::new();
+        fixture.setup_deadlock_manifests().await;
+        let scan = fixture
+            .table
+            .scan()
+            .with_concurrency_limit(1)
+            .build()
+            .unwrap();
+        let stream = scan
+            .plan_data_files(|_| async {
+                Err::<FileScanTask, _>(
+                    crate::Error::new(ErrorKind::DataInvalid, "injected error")
+                        .with_source(std::io::Error::other("injected source")),
+                )
+            })
+            .await
+            .unwrap();
+        let errors = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stream.collect::<Vec<_>>(),
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|result| {
+            let error = result.unwrap_err();
+            (
+                error.kind(),
+                error.message().to_owned(),
+                std::error::Error::source(&error).map(ToString::to_string),
+            )
+        })
+        .collect::<Vec<_>>();
+        assert_eq!(errors, vec![(
+            ErrorKind::DataInvalid,
+            "injected error".to_owned(),
+            Some("injected source".to_owned())
+        )]);
+    }
+
+    #[test]
+    fn test_plan_returns_cancelled_worker_errors() {
+        let driver = tokio::runtime::Runtime::new().unwrap();
+        for cancel_io in [false, true] {
+            let worker = tokio::runtime::Runtime::new().unwrap();
+            let runtime = if cancel_io {
+                Runtime::new_with_split(&worker, &driver)
+            } else {
+                Runtime::new_with_split(&driver, &worker)
+            };
+            let mut scan = driver.block_on(async {
+                let mut fixture = TableTestFixture::new();
+                fixture.setup_manifest_files().await;
+                fixture.table.scan().build().unwrap()
+            });
+            scan.runtime = runtime;
+            drop(worker);
+            driver.block_on(async {
+                for cow in [false, true] {
+                    let stream = if cow {
+                        scan.plan_cow_rewrite_files()
+                            .await
+                            .unwrap()
+                            .map_ok(|file| file.scan_task)
+                            .boxed()
+                    } else {
+                        scan.plan_files().await.unwrap()
+                    };
+                    let error = tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        stream.try_collect::<Vec<_>>(),
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap_err();
+                    assert!(
+                        std::error::Error::source(&error)
+                            .unwrap()
+                            .downcast_ref::<tokio::task::JoinError>()
+                            .unwrap()
+                            .is_cancelled(),
+                        "cancel_io={cancel_io}, cow={cow}: {error}"
+                    );
+                }
+            });
+        }
     }
 
     /// A filter that only matches the middle row group (`y` in [1100, 1200)) and
