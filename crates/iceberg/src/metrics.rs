@@ -102,6 +102,7 @@ impl ScanReport {
 
 /// Metrics collected while planning a table scan.
 #[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct ScanMetrics {
     pub(crate) total_planning_duration: Duration,
     pub(crate) total_data_manifests: u64,

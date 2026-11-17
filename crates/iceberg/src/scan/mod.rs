@@ -21,11 +21,14 @@ mod cache;
 use cache::*;
 mod context;
 use context::*;
+mod report;
 mod task;
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::time::Instant;
 
 use arrow_array::RecordBatch;
 use futures::channel::mpsc::{Sender, channel};
@@ -461,18 +464,20 @@ pub struct TableScan {
 impl TableScan {
     /// Returns a stream of [`FileScanTask`]s.
     pub async fn plan_files(&self) -> Result<FileScanTaskStream> {
-        self.plan_data_files(|ctx| ctx.into_file_scan_task()).await
+        self.plan_data_files(Arc::default(), |ctx| ctx.into_file_scan_task())
+            .await
     }
 
     pub(crate) async fn plan_cow_rewrite_files(
         &self,
     ) -> Result<BoxStream<'static, Result<crate::cow_rewrite::CowRewriteFile>>> {
-        self.plan_data_files(|ctx| ctx.into_cow_rewrite_file())
+        self.plan_data_files(Arc::default(), |ctx| ctx.into_cow_rewrite_file())
             .await
     }
 
     async fn plan_data_files<T, F, Fut>(
         &self,
+        metrics: Arc<report::ScanMetricsCounters>,
         build_result: F,
     ) -> Result<BoxStream<'static, Result<T>>>
     where
@@ -484,6 +489,7 @@ impl TableScan {
             return Ok(Box::pin(futures::stream::empty()));
         };
 
+        let planning_started = Instant::now();
         let concurrency_limit_manifest_files = self.concurrency_limit_manifest_files;
         let concurrency_limit_manifest_entries = self.concurrency_limit_manifest_entries;
 
@@ -508,6 +514,7 @@ impl TableScan {
             manifest_entry_data_ctx_tx,
             delete_file_idx.clone(),
             manifest_entry_delete_ctx_tx,
+            metrics.clone(),
         )?;
 
         let mut channel_for_manifest_error = planned_file_tx.clone();
@@ -597,7 +604,20 @@ impl TableScan {
             });
         }
 
-        Ok(planned_file_rx.boxed())
+        let tasks = planned_file_rx.boxed();
+        Ok(futures::stream::try_unfold(
+            (tasks, metrics, planning_started),
+            |(mut tasks, metrics, planning_started)| async move {
+                match tasks.next().await {
+                    Some(task) => task.map(|task| Some((task, (tasks, metrics, planning_started)))),
+                    None => {
+                        let _ = metrics.snapshot(planning_started.elapsed());
+                        Ok(None)
+                    }
+                }
+            },
+        )
+        .boxed())
     }
 
     /// Returns an [`ArrowRecordBatchStream`].
@@ -663,6 +683,10 @@ impl TableScan {
             // skip any data file whose partition data indicates that it can't contain
             // any data that matches this scan's filter
             if !expression_evaluator.eval(manifest_entry_context.manifest_entry.data_file())? {
+                manifest_entry_context
+                    .metrics
+                    .skipped_data_files
+                    .fetch_add(1, Ordering::Relaxed);
                 return Ok(());
             }
 
@@ -672,6 +696,10 @@ impl TableScan {
                 manifest_entry_context.manifest_entry.data_file(),
                 false,
             )? {
+                manifest_entry_context
+                    .metrics
+                    .skipped_data_files
+                    .fetch_add(1, Ordering::Relaxed);
                 return Ok(());
             }
         }
@@ -710,6 +738,10 @@ impl TableScan {
             // skip any data file whose partition data indicates that it can't contain
             // any data that matches this scan's filter
             if !expression_evaluator.eval(manifest_entry_context.manifest_entry.data_file())? {
+                manifest_entry_context
+                    .metrics
+                    .skipped_delete_files
+                    .fetch_add(1, Ordering::Relaxed);
                 return Ok(());
             }
         }
@@ -720,6 +752,19 @@ impl TableScan {
                 partition_spec_id: manifest_entry_context.partition_spec_id,
             })
             .await?;
+
+        let metrics = &manifest_entry_context.metrics;
+        metrics.indexed_delete_files.fetch_add(1, Ordering::Relaxed);
+        let counter = match manifest_entry_context.manifest_entry.content_type() {
+            DataContentType::EqualityDeletes => &metrics.equality_delete_files,
+            _ if manifest_entry_context.manifest_entry.file_format()
+                == crate::spec::DataFileFormat::Puffin =>
+            {
+                &metrics.dvs
+            }
+            _ => &metrics.positional_delete_files,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
 
         Ok(())
     }
@@ -738,6 +783,7 @@ mod tests {
     use std::fs;
     use std::fs::File;
     use std::sync::Arc;
+    use std::time::Duration;
 
     use arrow_array::cast::AsArray;
     use arrow_array::types::Int32Type;
@@ -749,6 +795,7 @@ mod tests {
     use parquet::arrow::ArrowWriter;
     use uuid::Uuid;
 
+    use super::report::ScanMetricsCounters;
     use super::resolve_field_id;
     use crate::arrow::ArrowReaderBuilder;
     use crate::expr::{BoundPredicate, Reference};
@@ -757,6 +804,7 @@ mod tests {
         RESERVED_COL_NAME_FILE, RESERVED_COL_NAME_LAST_UPDATED_SEQUENCE_NUMBER,
         RESERVED_COL_NAME_POS, RESERVED_COL_NAME_SPEC_ID, RESERVED_FIELD_ID_POS,
     };
+    use crate::metrics::ScanMetrics;
     use crate::scan::{FileScanTask, FileScanTaskDeleteFile};
     use crate::spec::{
         DataContentType, DataFileBuilder, DataFileFormat, Datum, Literal, MAIN_BRANCH,
@@ -3122,7 +3170,7 @@ mod tests {
 
         // This should timeout/hang if deadlock exists
         // We can use tokio::time::timeout
-        let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let result = tokio::time::timeout(Duration::from_secs(5), async {
             table_scan
                 .plan_files()
                 .await
@@ -3712,5 +3760,117 @@ mod tests {
             })
             .collect();
         assert_eq!(y, (1100..1200).collect::<Vec<i64>>());
+    }
+
+    #[tokio::test]
+    async fn test_planning_counts_live_files_and_predicate_rejections() {
+        let mut fixture = TableTestFixture::new();
+        fixture.setup_manifest_files().await;
+        let scan = fixture
+            .table
+            .scan()
+            .with_filter(Reference::new("x").less_than(Datum::long(200)))
+            .build()
+            .unwrap();
+        let metrics = Arc::new(ScanMetricsCounters::default());
+        let tasks = scan
+            .plan_data_files(metrics.clone(), |ctx| ctx.into_file_scan_task())
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+
+        let expected = ScanMetrics {
+            total_planning_duration: Duration::ZERO,
+            total_data_manifests: 1,
+            total_delete_manifests: 0,
+            skipped_data_manifests: 0,
+            skipped_delete_manifests: 0,
+            scanned_data_manifests: 1,
+            scanned_delete_manifests: 0,
+            result_data_files: 1,
+            skipped_data_files: 1,
+            total_file_size_in_bytes: tasks[0].file_size_in_bytes(),
+            result_delete_files: 0,
+            skipped_delete_files: 0,
+            total_delete_file_size_in_bytes: 0,
+            indexed_delete_files: 0,
+            equality_delete_files: 0,
+            positional_delete_files: 0,
+            dvs: 0,
+        };
+        assert_eq!(expected, metrics.snapshot(Duration::ZERO));
+    }
+
+    #[tokio::test]
+    async fn test_planning_counts_delete_attachments_separately_from_indexed_files() {
+        let mut fixture = TableTestFixture::new();
+        fixture.setup_deadlock_manifests().await;
+        let scan = fixture.table.scan().build().unwrap();
+        let metrics = Arc::new(ScanMetricsCounters::default());
+        scan.plan_data_files(metrics.clone(), |ctx| ctx.into_file_scan_task())
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+
+        let expected = ScanMetrics {
+            total_planning_duration: Duration::ZERO,
+            total_data_manifests: 1,
+            total_delete_manifests: 1,
+            skipped_data_manifests: 0,
+            skipped_delete_manifests: 0,
+            scanned_data_manifests: 1,
+            scanned_delete_manifests: 1,
+            result_data_files: 10,
+            skipped_data_files: 0,
+            total_file_size_in_bytes: 1000,
+            result_delete_files: 10,
+            skipped_delete_files: 0,
+            total_delete_file_size_in_bytes: 1000,
+            indexed_delete_files: 1,
+            equality_delete_files: 0,
+            positional_delete_files: 1,
+            dvs: 0,
+        };
+        assert_eq!(expected, metrics.snapshot(Duration::ZERO));
+    }
+
+    #[tokio::test]
+    async fn test_planning_counts_deletion_vector_content_bytes() {
+        let mut fixture = TableTestFixture::new();
+        fixture.setup_promoted_partition_with_dv().await;
+        let scan = fixture.table.scan().build().unwrap();
+        let metrics = Arc::new(ScanMetricsCounters::default());
+        let tasks = scan
+            .plan_data_files(metrics.clone(), |ctx| ctx.into_file_scan_task())
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+
+        let expected = ScanMetrics {
+            total_planning_duration: Duration::ZERO,
+            total_data_manifests: 1,
+            total_delete_manifests: 1,
+            skipped_data_manifests: 0,
+            skipped_delete_manifests: 0,
+            scanned_data_manifests: 1,
+            scanned_delete_manifests: 1,
+            result_data_files: 1,
+            skipped_data_files: 0,
+            total_file_size_in_bytes: tasks[0].file_size_in_bytes(),
+            result_delete_files: 1,
+            skipped_delete_files: 0,
+            total_delete_file_size_in_bytes: 40,
+            indexed_delete_files: 1,
+            equality_delete_files: 0,
+            positional_delete_files: 0,
+            dvs: 1,
+        };
+        assert_eq!(expected, metrics.snapshot(Duration::ZERO));
     }
 }
