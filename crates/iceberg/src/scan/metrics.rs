@@ -38,7 +38,7 @@ pub(super) struct PlanningCounters {
 }
 
 #[cfg(test)]
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub(super) struct PlanningCounts {
     pub(super) total_data_manifests: u64,
     pub(super) total_delete_manifests: u64,

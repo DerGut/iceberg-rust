@@ -1,0 +1,125 @@
+{
+  "production_revision": "327080489d63c65b60d268c3d2dd2caa7caf5e4b",
+  "checks": [
+    {
+      "name": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit_status": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "core-tests",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "iceberg",
+        "--lib",
+        "--all-features"
+      ],
+      "exit_status": 0,
+      "log_sha256": "2a6fe65314d77d486a4bfee898fed9e9e519f25ea6f4fcd9181bbc08e1ac3d64"
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "-p",
+        "iceberg",
+        "--all-targets",
+        "--all-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_status": 0,
+      "log_sha256": "02bf02279df711f0d950ff26b7b639641508daeed06046b4a5f72ca7ebc6c0a9"
+    },
+    {
+      "name": "rust-capture",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "iceberg",
+        "--lib",
+        "--no-default-features",
+        "scan::metrics_java::test_export_java_differential_fixtures",
+        "--",
+        "--ignored",
+        "--exact"
+      ],
+      "exit_status": 0,
+      "log_sha256": "034949e12135ca005a7a45a6304e8d31d34fe97000137cbed2aa86982b2677b0"
+    },
+    {
+      "name": "java-capture",
+      "command": [
+        "./gradlew",
+        ":iceberg-core:test",
+        "--tests",
+        "org.apache.iceberg.TestRustScanReports",
+        "-x",
+        "generateGitProperties",
+        "--rerun-tasks",
+        "--console=plain"
+      ],
+      "exit_status": 0,
+      "log_sha256": "0ee6567af2206492376f487d01b3cbb172be4e1d486c16f12e4cc1bb0b874ad5"
+    },
+    {
+      "name": "comparison",
+      "command": [
+        "python3",
+        "/private/tmp/iceberg-planning-counters-java/dev/scan-reports/compare.py",
+        "/private/tmp/iceberg-planning-counters-review-20261119/results"
+      ],
+      "exit_status": 1,
+      "log_sha256": "3c1042f146e15b89864eaf87ba32dd499423a4aa17d7ef7ef1ede114f2aa5fe8"
+    },
+    {
+      "name": "comparator-controls",
+      "command": [
+        "python3",
+        "/private/tmp/iceberg-planning-counters-java/dev/scan-reports/verify_comparison.py",
+        "/private/tmp/iceberg-planning-counters-review-20261119/results"
+      ],
+      "exit_status": 0,
+      "log_sha256": "9a447244ebefe90600b2dc8e503190068ad1a3e1148e42e6e078b23dbbb2bc28"
+    }
+  ],
+  "rust_revision": "7230c571b755d81300f94d036e10a1f5b4f5df13",
+  "rust_working_tree_patch": "",
+  "java_revision": "4e61757dcf568051a13bb8d4c00ef57c9f248947",
+  "runtime": [
+    "rustc 1.97.0-nightly (e8e4541ff 2026-04-15)",
+    "binary: rustc",
+    "commit-hash: e8e4541ff19649d95afab52fdde2c2eaa6829965",
+    "commit-date: 2026-04-15",
+    "host: aarch64-apple-darwin",
+    "release: 1.97.0-nightly",
+    "LLVM version: 22.1.2",
+    "cargo 1.97.0-nightly (eb94155a9 2026-04-09)",
+    "openjdk version \"17.0.19\" 2026-04-21",
+    "OpenJDK Runtime Environment Temurin-17.0.19+10 (build 17.0.19+10)",
+    "OpenJDK 64-Bit Server VM Temurin-17.0.19+10 (build 17.0.19+10, mixed mode, sharing)",
+    "Darwin MacBook-Pro-3.local 25.6.0 Darwin Kernel Version 25.6.0: Mon Oct 12 00:39:48 PDT 2026; root:xnu-12377.161.15.701.48~2/RELEASE_ARM64_T6041 arm64"
+  ],
+  "gradle": "8.14.6 (pinned source wrapper)",
+  "command": "bash dev/scan-reports/run.sh /private/tmp/iceberg-planning-counters-review-20261119",
+  "comparison_exit_status": 1,
+  "mismatched_fixtures": [
+    "writer-equality-pruning",
+    "writer-equality-association",
+    "close-after-one",
+    "cow-close-after-one"
+  ],
+  "explanation": "All observed differences are retained; see comparison.json and SEMANTICS.md"
+}

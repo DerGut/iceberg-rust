@@ -1,0 +1,613 @@
+{
+  "results": [
+    {
+      "fixture": "unfiltered",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "dead-only",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "manifest-pruned",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "file-pruned",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "all-pruned",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "projection",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "current-schema",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "time-travel",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "unmatched-delete",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "shared-position",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "path-position",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "equality",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "dv",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "dv-supersession",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "delete-manifest-pruned",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "writer-unfiltered",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "writer-file-pruned",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "writer-all-pruned",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "writer-equality-pruning",
+      "status": "planner-difference",
+      "comparison": "different",
+      "categories": [
+        "planner-behavior"
+      ],
+      "mismatches": [
+        {
+          "metric": "equality_delete_files",
+          "java": 1,
+          "rust": 2,
+          "category": "planner-behavior",
+          "explanation": "Java prunes eq-99.parquet with writer-produced bounds for y < 20. Rust delete-entry pruning checks partitions only. The counters reflect different plans.",
+          "checkpoint": "consumer-stop",
+          "rust_after_workers_stop": 2
+        },
+        {
+          "metric": "indexed_delete_files",
+          "java": 1,
+          "rust": 2,
+          "category": "planner-behavior",
+          "explanation": "Java prunes eq-99.parquet with writer-produced bounds for y < 20. Rust delete-entry pruning checks partitions only. The counters reflect different plans.",
+          "checkpoint": "consumer-stop",
+          "rust_after_workers_stop": 2
+        },
+        {
+          "metric": "result_delete_files",
+          "java": 1,
+          "rust": 2,
+          "category": "planner-behavior",
+          "explanation": "Java prunes eq-99.parquet with writer-produced bounds for y < 20. Rust delete-entry pruning checks partitions only. The counters reflect different plans.",
+          "checkpoint": "consumer-stop",
+          "rust_after_workers_stop": 2
+        },
+        {
+          "metric": "skipped_delete_files",
+          "java": 1,
+          "rust": 0,
+          "category": "planner-behavior",
+          "explanation": "Java prunes eq-99.parquet with writer-produced bounds for y < 20. Rust delete-entry pruning checks partitions only. The counters reflect different plans.",
+          "checkpoint": "consumer-stop",
+          "rust_after_workers_stop": 0
+        },
+        {
+          "metric": "total_delete_file_size_in_bytes",
+          "java": 558,
+          "rust": 1116,
+          "category": "planner-behavior",
+          "explanation": "Java prunes eq-99.parquet with writer-produced bounds for y < 20. Rust delete-entry pruning checks partitions only. The counters reflect different plans.",
+          "checkpoint": "consumer-stop",
+          "rust_after_workers_stop": 1116
+        },
+        {
+          "metric": "plans",
+          "java": [
+            {
+              "path": "<fixture-root>/written-10.parquet",
+              "size": 1286,
+              "deletes": [
+                {
+                  "path": "<fixture-root>/eq-10.parquet",
+                  "size": 558,
+                  "content": 2,
+                  "content_size": null,
+                  "content_offset": null
+                }
+              ]
+            }
+          ],
+          "rust": [
+            {
+              "deletes": [
+                {
+                  "content": 2,
+                  "content_offset": null,
+                  "content_size": null,
+                  "path": "<fixture-root>/eq-10.parquet",
+                  "size": 558
+                },
+                {
+                  "content": 2,
+                  "content_offset": null,
+                  "content_size": null,
+                  "path": "<fixture-root>/eq-99.parquet",
+                  "size": 558
+                }
+              ],
+              "path": "<fixture-root>/written-10.parquet",
+              "size": 1286
+            }
+          ],
+          "category": "planner-behavior",
+          "explanation": "Java prunes eq-99.parquet with writer-produced bounds for y < 20. Rust delete-entry pruning checks partitions only. The counters reflect different plans."
+        }
+      ],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "writer-equality-association",
+      "status": "planner-difference",
+      "comparison": "different",
+      "categories": [
+        "planner-behavior"
+      ],
+      "mismatches": [
+        {
+          "metric": "result_delete_files",
+          "java": 1,
+          "rust": 4,
+          "category": "planner-behavior",
+          "explanation": "Java uses bounds when associating equality deletes with data files. Rust uses partition and sequence checks, producing four attachments versus Java's one.",
+          "checkpoint": "consumer-stop",
+          "rust_after_workers_stop": 4
+        },
+        {
+          "metric": "total_delete_file_size_in_bytes",
+          "java": 558,
+          "rust": 2232,
+          "category": "planner-behavior",
+          "explanation": "Java uses bounds when associating equality deletes with data files. Rust uses partition and sequence checks, producing four attachments versus Java's one.",
+          "checkpoint": "consumer-stop",
+          "rust_after_workers_stop": 2232
+        },
+        {
+          "metric": "plans",
+          "java": [
+            {
+              "path": "<fixture-root>/written-10.parquet",
+              "size": 1286,
+              "deletes": [
+                {
+                  "path": "<fixture-root>/eq-10.parquet",
+                  "size": 558,
+                  "content": 2,
+                  "content_size": null,
+                  "content_offset": null
+                }
+              ]
+            },
+            {
+              "path": "<fixture-root>/written-50.parquet",
+              "size": 1286,
+              "deletes": []
+            }
+          ],
+          "rust": [
+            {
+              "deletes": [
+                {
+                  "content": 2,
+                  "content_offset": null,
+                  "content_size": null,
+                  "path": "<fixture-root>/eq-10.parquet",
+                  "size": 558
+                },
+                {
+                  "content": 2,
+                  "content_offset": null,
+                  "content_size": null,
+                  "path": "<fixture-root>/eq-99.parquet",
+                  "size": 558
+                }
+              ],
+              "path": "<fixture-root>/written-10.parquet",
+              "size": 1286
+            },
+            {
+              "deletes": [
+                {
+                  "content": 2,
+                  "content_offset": null,
+                  "content_size": null,
+                  "path": "<fixture-root>/eq-10.parquet",
+                  "size": 558
+                },
+                {
+                  "content": 2,
+                  "content_offset": null,
+                  "content_size": null,
+                  "path": "<fixture-root>/eq-99.parquet",
+                  "size": 558
+                }
+              ],
+              "path": "<fixture-root>/written-50.parquet",
+              "size": 1286
+            }
+          ],
+          "category": "planner-behavior",
+          "explanation": "Java uses bounds when associating equality deletes with data files. Rust uses partition and sequence checks, producing four attachments versus Java's one."
+        }
+      ],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "nested-all",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "writer-projection-filter",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "writer-empty-projection-filter",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "nested-projection-filter",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "nested-filter-only",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "cow-writer-projection-filter",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "cow-nested-projection-filter",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "metadata-projection",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "close-after-one",
+      "status": "deferred-lifecycle",
+      "comparison": "different",
+      "categories": [
+        "scheduling"
+      ],
+      "mismatches": [
+        {
+          "metric": "result_data_files",
+          "java": 1,
+          "rust": 2,
+          "category": "scheduling",
+          "explanation": "Even after fixture producers stop, Rust counts concurrent buffered work that Java's lazy iterator did not visit. Exact partial-count parity is not promised.",
+          "checkpoint": "consumer-stop",
+          "rust_after_workers_stop": 2
+        },
+        {
+          "metric": "result_data_files.after_workers_stop",
+          "java": 1,
+          "rust": 2,
+          "category": "scheduling",
+          "explanation": "Even after fixture producers stop, Rust counts concurrent buffered work that Java's lazy iterator did not visit. Exact partial-count parity is not promised.",
+          "checkpoint": "after-workers-stop",
+          "rust_after_workers_stop": 2
+        },
+        {
+          "metric": "total_file_size_in_bytes",
+          "java": 2988,
+          "rust": 5976,
+          "category": "scheduling",
+          "explanation": "Even after fixture producers stop, Rust counts concurrent buffered work that Java's lazy iterator did not visit. Exact partial-count parity is not promised.",
+          "checkpoint": "consumer-stop",
+          "rust_after_workers_stop": 5976
+        },
+        {
+          "metric": "total_file_size_in_bytes.after_workers_stop",
+          "java": 2988,
+          "rust": 5976,
+          "category": "scheduling",
+          "explanation": "Even after fixture producers stop, Rust counts concurrent buffered work that Java's lazy iterator did not visit. Exact partial-count parity is not promised.",
+          "checkpoint": "after-workers-stop",
+          "rust_after_workers_stop": 5976
+        }
+      ],
+      "guarantee": "Consumer-stop and settled checkpoints only; production finalization is deferred."
+    },
+    {
+      "fixture": "close-after-last",
+      "status": "deferred-lifecycle",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "Consumer-stop and settled checkpoints only; production finalization is deferred."
+    },
+    {
+      "fixture": "manifest-read-failure",
+      "status": "deferred-lifecycle",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "Consumer-stop and settled checkpoints only; production finalization is deferred."
+    },
+    {
+      "fixture": "cow-writer-unfiltered",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "cow-writer-file-pruned",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "cow-writer-all-pruned",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "cow-shared-position",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "cow-dv",
+      "status": "match",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "All numeric counters and full file/delete plan compared after EOF."
+    },
+    {
+      "fixture": "cow-close-after-one",
+      "status": "deferred-lifecycle",
+      "comparison": "different",
+      "categories": [
+        "scheduling"
+      ],
+      "mismatches": [
+        {
+          "metric": "result_data_files.after_workers_stop",
+          "java": 1,
+          "rust": 2,
+          "category": "scheduling",
+          "explanation": "Even after fixture producers stop, Rust counts concurrent buffered work that Java's lazy iterator did not visit. Exact partial-count parity is not promised.",
+          "checkpoint": "after-workers-stop",
+          "rust_after_workers_stop": 2
+        },
+        {
+          "metric": "total_file_size_in_bytes.after_workers_stop",
+          "java": 2988,
+          "rust": 5976,
+          "category": "scheduling",
+          "explanation": "Even after fixture producers stop, Rust counts concurrent buffered work that Java's lazy iterator did not visit. Exact partial-count parity is not promised.",
+          "checkpoint": "after-workers-stop",
+          "rust_after_workers_stop": 5976
+        }
+      ],
+      "guarantee": "Consumer-stop and settled checkpoints only; production finalization is deferred."
+    },
+    {
+      "fixture": "cow-close-after-last",
+      "status": "deferred-lifecycle",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "Consumer-stop and settled checkpoints only; production finalization is deferred."
+    },
+    {
+      "fixture": "cow-manifest-read-failure",
+      "status": "deferred-lifecycle",
+      "comparison": "equal",
+      "categories": [],
+      "mismatches": [],
+      "guarantee": "Consumer-stop and settled checkpoints only; production finalization is deferred."
+    }
+  ],
+  "groups": {
+    "match": [
+      "unfiltered",
+      "dead-only",
+      "manifest-pruned",
+      "file-pruned",
+      "all-pruned",
+      "projection",
+      "current-schema",
+      "time-travel",
+      "unmatched-delete",
+      "shared-position",
+      "path-position",
+      "equality",
+      "dv",
+      "dv-supersession",
+      "delete-manifest-pruned",
+      "writer-unfiltered",
+      "writer-file-pruned",
+      "writer-all-pruned",
+      "nested-all",
+      "writer-projection-filter",
+      "writer-empty-projection-filter",
+      "nested-projection-filter",
+      "nested-filter-only",
+      "cow-writer-projection-filter",
+      "cow-nested-projection-filter",
+      "metadata-projection",
+      "cow-writer-unfiltered",
+      "cow-writer-file-pruned",
+      "cow-writer-all-pruned",
+      "cow-shared-position",
+      "cow-dv"
+    ],
+    "planner-difference": [
+      "writer-equality-pruning",
+      "writer-equality-association"
+    ],
+    "deferred-lifecycle": [
+      "close-after-one",
+      "close-after-last",
+      "manifest-read-failure",
+      "cow-close-after-one",
+      "cow-close-after-last",
+      "cow-manifest-read-failure"
+    ],
+    "unexpected-difference": []
+  },
+  "scope": "16 planning counters plus exact file/delete plans; no reporter API is added.",
+  "deferred": [
+    "planning duration",
+    "production finalization after errors or early drop",
+    "worker cancellation and worker-failure propagation"
+  ],
+  "excluded": [
+    "report identity, projection, filter serialization and metadata: reporting is outside this branch",
+    "row-reading, row-group and page metrics"
+  ],
+  "normalization": "Plan/delete ordering only. Absolute paths and all sizes are compared before archival normalization."
+}

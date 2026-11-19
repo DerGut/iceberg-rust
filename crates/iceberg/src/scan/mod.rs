@@ -22,6 +22,8 @@ use cache::*;
 mod context;
 use context::*;
 mod metrics;
+#[cfg(test)]
+mod metrics_java;
 mod task;
 
 use std::collections::HashMap;
