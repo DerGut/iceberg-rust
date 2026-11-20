@@ -15,19 +15,23 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Instant;
 
-use futures::StreamExt;
-use futures::stream::BoxStream;
+use futures::stream::{BoxStream, Fuse};
+use futures::{Stream, StreamExt};
 use tracing::instrument::WithSubscriber;
 
 use super::PlanContext;
 use super::metrics::PlanningCounters;
+use crate::expr::Predicate;
 use crate::metadata_columns::{
     RESERVED_COL_NAME_PARTITION, RESERVED_FIELD_ID_PARTITION, get_metadata_field,
 };
 use crate::metrics::{MetricsReport, MetricsReporter, ScanReport};
+use crate::spec::SchemaId;
 use crate::{Result, Runtime, TableIdent};
 
 pub(super) fn report_on_completion<T: Send + 'static>(
@@ -39,71 +43,125 @@ pub(super) fn report_on_completion<T: Send + 'static>(
     runtime: Runtime,
     started: Instant,
 ) -> BoxStream<'static, Result<T>> {
-    let snapshot_id = context.snapshot.snapshot_id();
-    let schema_id = context.snapshot_schema.schema_id();
-    let filter = context.predicate.as_deref().cloned();
-    let projected_field_ids = context.field_ids.as_ref().clone();
-    let projected_field_names = projected_field_ids
-        .iter()
-        .map(|id| {
-            context
-                .snapshot_schema
-                .name_by_field_id(*id)
-                .map(str::to_owned)
-                .unwrap_or_else(|| {
-                    if *id == RESERVED_FIELD_ID_PARTITION {
-                        RESERVED_COL_NAME_PARTITION.to_owned()
-                    } else {
-                        get_metadata_field(*id)
-                            .expect("validated scan projection")
-                            .name
-                            .clone()
-                    }
-                })
-        })
-        .collect();
-    let dispatcher = tracing::dispatcher::get_default(Clone::clone);
-    let reporting = async move {
-        let report = MetricsReport::Scan(ScanReport {
+    let pending =
+        PendingScanReport::new(table_ident, context, counters, reporter, runtime, started);
+    OnSuccessfulCompletion::new(tasks, move || pending.complete()).boxed()
+}
+
+struct PendingScanReport {
+    table_ident: TableIdent,
+    snapshot_id: i64,
+    schema_id: SchemaId,
+    filter: Option<Predicate>,
+    projected_field_ids: Vec<i32>,
+    projected_field_names: Vec<String>,
+    counters: Arc<PlanningCounters>,
+    started: Instant,
+    reporter: Arc<dyn MetricsReporter>,
+    runtime: Runtime,
+    dispatcher: tracing::Dispatch,
+}
+
+impl PendingScanReport {
+    fn new(
+        table_ident: TableIdent,
+        context: &PlanContext,
+        counters: Arc<PlanningCounters>,
+        reporter: Arc<dyn MetricsReporter>,
+        runtime: Runtime,
+        started: Instant,
+    ) -> Self {
+        let projected_field_ids = context.field_ids.as_ref().clone();
+        let projected_field_names = projected_field_ids
+            .iter()
+            .map(|id| {
+                context
+                    .snapshot_schema
+                    .name_by_field_id(*id)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| {
+                        if *id == RESERVED_FIELD_ID_PARTITION {
+                            RESERVED_COL_NAME_PARTITION.to_owned()
+                        } else {
+                            get_metadata_field(*id)
+                                .expect("validated scan projection")
+                                .name
+                                .clone()
+                        }
+                    })
+            })
+            .collect();
+        Self {
             table_ident,
-            snapshot_id,
-            schema_id,
-            filter,
+            snapshot_id: context.snapshot.snapshot_id(),
+            schema_id: context.snapshot_schema.schema_id(),
+            filter: context.predicate.as_deref().cloned(),
             projected_field_ids,
             projected_field_names,
-            metrics: counters.scan_metrics(started.elapsed()),
+            counters,
+            started,
+            reporter,
+            runtime,
+            dispatcher: tracing::dispatcher::get_default(Clone::clone),
+        }
+    }
+
+    fn complete(self) {
+        let report = MetricsReport::Scan(ScanReport {
+            table_ident: self.table_ident,
+            snapshot_id: self.snapshot_id,
+            schema_id: self.schema_id,
+            filter: self.filter,
+            projected_field_ids: self.projected_field_ids,
+            projected_field_names: self.projected_field_names,
+            metrics: self.counters.scan_metrics(self.started.elapsed()),
             metadata: Default::default(),
         });
         drop(
-            runtime.io().spawn(
+            self.runtime.io().spawn(
                 async move {
-                    reporter.report(&report).await;
+                    self.reporter.report(&report).await;
                 }
-                .with_subscriber(dispatcher),
+                .with_subscriber(self.dispatcher),
             ),
         );
-    };
-    futures::stream::unfold(
-        (tasks, Some(reporting)),
-        |(mut tasks, mut reporting)| async move {
-            match tasks.next().await {
-                Some(task) => {
-                    if task.is_err() {
-                        reporting = None;
-                    }
-                    Some((task, (tasks, reporting)))
-                }
-                None => {
-                    if let Some(reporting) = reporting {
-                        reporting.await;
-                    }
-                    None
+    }
+}
+
+struct OnSuccessfulCompletion<T, F> {
+    inner: Fuse<BoxStream<'static, Result<T>>>,
+    on_complete: Option<F>,
+}
+
+impl<T, F: FnOnce()> OnSuccessfulCompletion<T, F> {
+    fn new(inner: BoxStream<'static, Result<T>>, on_complete: F) -> Self {
+        Self {
+            inner: inner.fuse(),
+            on_complete: Some(on_complete),
+        }
+    }
+}
+
+// The inner stream stays pinned in its box; the callback is never pinned.
+impl<T, F> Unpin for OnSuccessfulCompletion<T, F> {}
+
+impl<T, F: FnOnce()> Stream for OnSuccessfulCompletion<T, F> {
+    type Item = Result<T>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        let item = this.inner.poll_next_unpin(cx);
+        match &item {
+            Poll::Ready(Some(Err(_))) => this.on_complete = None,
+            Poll::Ready(None) => {
+                if let Some(complete) = this.on_complete.take() {
+                    complete();
                 }
             }
-        },
-    )
-    .fuse()
-    .boxed()
+            _ => {}
+        }
+        item
+    }
 }
 
 #[cfg(test)]
@@ -281,31 +339,65 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_stream_errors_preserve_remaining_items_without_reporting() {
-        let fixture = TableTestFixture::new();
-        let scan = fixture.table.scan().build().unwrap();
-        let (reporter, mut reports) = recording_reporter();
-        let tasks = futures::stream::iter([
-            Ok(1),
-            Err(crate::Error::new(crate::ErrorKind::DataInvalid, "injected")),
-            Ok(2),
-        ])
-        .boxed();
-        let stream = report_on_completion(
-            tasks,
-            Arc::default(),
-            scan.table_ident.clone(),
-            scan.plan_context.as_ref().unwrap(),
-            reporter,
-            scan.runtime.clone(),
-            Instant::now(),
-        );
-        let actual: Vec<_> = stream
-            .map(|result| result.map_err(|error| error.kind()))
-            .collect()
-            .await;
-        assert_eq!(actual, [Ok(1), Err(crate::ErrorKind::DataInvalid), Ok(2)]);
-        assert!(next_report(&mut reports).await.is_none());
+    async fn test_completion_adapter_completes_only_after_error_free_eof() {
+        use std::sync::mpsc::TryRecvError::{Disconnected, Empty};
+
+        use crate::ErrorKind::DataInvalid;
+
+        for (items, completes) in [
+            (vec![], true),
+            (vec![Ok(1), Ok(2)], true),
+            (vec![Err(DataInvalid), Ok(1)], false),
+            (vec![Ok(1), Err(DataInvalid), Ok(2)], false),
+            (vec![Ok(1), Err(DataInvalid)], false),
+            (vec![Err(DataInvalid), Err(DataInvalid)], false),
+        ] {
+            let tasks = futures::stream::iter(items.clone())
+                .map(|item| item.map_err(|kind| crate::Error::new(kind, "injected")))
+                .boxed();
+            let (complete, completed) = std::sync::mpsc::channel();
+            let mut stream = OnSuccessfulCompletion::new(tasks, move || complete.send(()).unwrap());
+            let mut actual = vec![];
+            let mut failed = false;
+            while let Some(item) = stream.next().await {
+                failed |= item.is_err();
+                actual.push(item.map_err(|error| error.kind()));
+                assert_eq!(
+                    completed.try_recv(),
+                    Err(if failed { Disconnected } else { Empty })
+                );
+            }
+            assert_eq!(actual, items);
+            assert!(stream.next().await.is_none());
+            assert!(stream.next().await.is_none());
+            assert_eq!(
+                completed.try_recv(),
+                if completes { Ok(()) } else { Err(Disconnected) }
+            );
+            assert_eq!(completed.try_recv(), Err(Disconnected));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_completion_adapter_discards_callback_when_dropped() {
+        use std::sync::mpsc::TryRecvError::{Disconnected, Empty};
+
+        for (poll_pending, consume_item) in [(false, false), (true, false), (true, true)] {
+            let (tx, tasks) = futures::channel::mpsc::unbounded();
+            let (complete, completed) = std::sync::mpsc::channel();
+            let mut stream =
+                OnSuccessfulCompletion::new(tasks.boxed(), move || complete.send(()).unwrap());
+            if poll_pending {
+                assert!(futures::poll!(stream.next()).is_pending());
+            }
+            if consume_item {
+                tx.unbounded_send(Ok(1)).unwrap();
+                assert_eq!(stream.next().await.transpose().unwrap(), Some(1));
+            }
+            assert_eq!(completed.try_recv(), Err(Empty));
+            drop(stream);
+            assert_eq!(completed.try_recv(), Err(Disconnected));
+        }
     }
 
     #[derive(Debug, Default)]
