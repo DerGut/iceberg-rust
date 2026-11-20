@@ -458,3 +458,90 @@ async fn manifest_failures_and_snapshotless_tables_do_not_report() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn mixed_operations_report_only_completed_planning() {
+    let catalog = catalog().await;
+    let table = populated_table(&catalog).await;
+    let (reporter, mut reports) = recording_reporter();
+    let scan = table
+        .scan()
+        .select(["bar"])
+        .with_metrics_reporter(Arc::new(reporter))
+        .build()
+        .unwrap();
+    let (completed, partial) = tokio::join!(scan.plan_files(), scan.plan_files());
+    let mut completed = completed.unwrap();
+    let mut partial = partial.unwrap();
+    let (first, dropped) = tokio::join!(completed.next(), partial.next());
+    let first = first.unwrap().unwrap();
+    dropped.unwrap().unwrap();
+    drop(partial);
+    let mut tasks = vec![first];
+    tasks.extend(completed.try_collect::<Vec<_>>().await.unwrap());
+    let bytes = tasks.iter().map(|task| task.file_size_in_bytes()).sum();
+    assert_eq!(tasks.len(), 2);
+    drop(scan);
+    assert_eq!(
+        received(&mut reports).await.0,
+        expected(&table, None, 2, bytes)
+    );
+    closed(reports).await;
+    catalog.drop_table(table.identifier()).await.unwrap();
+    catalog
+        .drop_namespace(table.identifier().namespace())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn arrow_read_failure_keeps_completed_planning_report() {
+    let catalog = catalog().await;
+    let table = populated_table(&catalog).await;
+    let (reporter, mut reports) = recording_reporter();
+    let scan = table
+        .scan()
+        .select(["bar"])
+        .with_metrics_reporter(Arc::new(reporter))
+        .build()
+        .unwrap();
+    let tasks: Vec<_> = scan
+        .plan_files()
+        .await
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap();
+    let bytes = tasks.iter().map(|task| task.file_size_in_bytes()).sum();
+    assert_eq!(tasks.len(), 2);
+    let missing_file = tasks[0].data_file_path().to_owned();
+    table.file_io().delete(&missing_file).await.unwrap();
+    let batches = table
+        .reader_builder()
+        .build()
+        .read(futures::stream::iter(tasks.into_iter().map(Ok)).boxed())
+        .unwrap()
+        .stream()
+        .try_collect::<Vec<_>>();
+    let error = tokio::time::timeout(Duration::from_secs(20), batches)
+        .await
+        .unwrap()
+        .unwrap_err();
+    let message = format!("{error:?}");
+    assert!(message.contains("NotFound"), "{message}");
+    assert!(
+        message.contains(missing_file.rsplit('/').next().unwrap()),
+        "{message}"
+    );
+    drop(scan);
+    assert_eq!(
+        received(&mut reports).await.0,
+        expected(&table, None, 2, bytes)
+    );
+    closed(reports).await;
+    catalog.drop_table(table.identifier()).await.unwrap();
+    catalog
+        .drop_namespace(table.identifier().namespace())
+        .await
+        .unwrap();
+}

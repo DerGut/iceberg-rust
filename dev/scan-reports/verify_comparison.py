@@ -27,6 +27,9 @@ from compare import METRICS
 root = Path(sys.argv[1])
 original = json.loads((root / "rust.json").read_text())
 java = (root / "java.json").read_text()
+baseline = subprocess.run([sys.executable, str(Path(__file__).with_name("compare.py")), str(root)], capture_output=True, text=True)
+assert baseline.returncode == 1, (baseline.stdout, baseline.stderr)
+assert not json.loads((root / "comparison.json").read_text())["groups"]["unexpected-difference"]
 controls = [("unfiltered", metric, "increment") for metric in sorted(METRICS)]
 controls += [
     ("unfiltered", "result_data_files", "missing"),
@@ -95,6 +98,22 @@ report_controls += [
     ("java", "unfiltered", ["report", "metadata"], "clear"),
     ("java", "unfiltered", ["report", "metrics", "total-planning-duration", "time-unit"], "replace"),
 ]
+report_controls += [
+    ("rust", "time-travel", ["reports", 0, "snapshot-id"], "current-snapshot"),
+    ("rust", "time-travel", ["requested_snapshot_id"], "current-snapshot"),
+    ("rust", "time-travel", ["reports", 0, "schema-id"], "current-schema"),
+    ("rust", "time-travel", ["reports", 0, "projected-field-ids"], "add-current-field"),
+    ("rust", "time-travel", ["counts", "result_data_files"], "current-counts"),
+]
+for fixture in ["writer-equality-pruning", "writer-equality-association"]:
+    for side, cases in [("rust", original), ("java", json.loads(java))]:
+        case = next(c for c in cases if c["fixture"] == fixture)
+        for plan_index, plan in enumerate(case["plans"]):
+            for delete_index, _ in enumerate(plan["deletes"]):
+                for field in ["path", "content", "size", "content_offset", "content_size"]:
+                    report_controls.append((side, fixture,
+                        ["plans", plan_index, "deletes", delete_index, field],
+                        "wrong-root" if field == "path" else "invalid-delete-property"))
 for side, fixture, path, operation in report_controls:
     captures = {"rust": copy.deepcopy(original), "java": json.loads(java)}
     case = next(c for c in captures[side] if c["fixture"] == fixture)
@@ -102,7 +121,14 @@ for side, fixture, path, operation in report_controls:
     for key in path[:-1]:
         parent = parent[key]
     key = path[-1]
-    if operation == "increment": parent[key] += 1
+    if operation == "current-snapshot": parent[key] = case["time_travel"]["current_snapshot_id"]
+    elif operation == "current-schema": parent[key] = case["time_travel"]["current_schema_id"]
+    elif operation == "add-current-field": parent[key].append(100)
+    elif operation == "current-counts":
+        parent[key] = case["settled_counts"][key] = case["reports"][0]["metrics"][key] = 2
+    elif operation == "wrong-root": parent[key] = "/wrong-root/" + Path(parent[key]).name
+    elif operation == "invalid-delete-property": parent[key] = 999
+    elif operation == "increment": parent[key] += 1
     elif operation == "replace": parent[key] = "corrupted"
     elif operation == "clear": parent[key] = [] if isinstance(parent[key], list) else {}
     elif operation == "duplicate": parent[key].append(copy.deepcopy(parent[key][0]))

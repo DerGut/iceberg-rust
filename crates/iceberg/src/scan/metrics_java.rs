@@ -519,6 +519,89 @@ async fn writer_statistics_fixture(fixture: &mut TableTestFixture, nested: bool,
     list.close().await.unwrap();
 }
 
+async fn prepare_older_snapshot(fixture: &mut TableTestFixture) -> serde_json::Value {
+    let scan = fixture.table.scan().build().unwrap();
+    let context = scan.plan_context.as_ref().unwrap();
+    let list = context.get_manifest_list().await.unwrap();
+    let manifest = context
+        .object_cache
+        .get_manifest(&list.entries()[0])
+        .await
+        .unwrap();
+    let mut data = manifest
+        .entries()
+        .iter()
+        .find(|entry| entry.is_alive())
+        .unwrap()
+        .data_file()
+        .clone();
+    let older_path = format!("{}/older.parquet", fixture.table_location);
+    fs::copy(data.file_path(), &older_path).unwrap();
+    data.file_path = older_path.clone();
+    let mut metadata = fixture.table.metadata().clone();
+    let current = metadata.current_snapshot().unwrap().clone();
+    let mut older = current.parent_snapshot(&metadata).unwrap().as_ref().clone();
+    older.schema_id = Some(1);
+    let older_schema = metadata.schema_by_id(1).unwrap().clone();
+    let mut writer = ManifestWriterBuilder::new(
+        fixture.next_manifest_file(),
+        Some(older.snapshot_id()),
+        older_schema,
+        metadata.default_partition_spec().as_ref().clone(),
+    )
+    .build_v2_data();
+    let older_size = data.file_size_in_bytes();
+    writer
+        .add_entry(
+            ManifestEntry::builder()
+                .status(ManifestStatus::Added)
+                .data_file(data)
+                .build(),
+        )
+        .unwrap();
+    let manifest = writer.write_manifest_file().await.unwrap();
+    let output = fixture
+        .table
+        .file_io()
+        .new_output(older.manifest_list())
+        .unwrap()
+        .writer()
+        .await
+        .unwrap();
+    let mut list = ManifestListWriter::v2(
+        output,
+        older.snapshot_id(),
+        older.parent_snapshot_id(),
+        older.sequence_number(),
+    );
+    list.add_manifests(std::iter::once(manifest)).unwrap();
+    list.close().await.unwrap();
+    let current_tasks: Vec<_> = scan
+        .plan_files()
+        .await
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap();
+    let mut current = current.as_ref().clone();
+    current.schema_id = Some(metadata.current_schema().schema_id());
+    let witness = json!({
+        "older_path": older_path, "older_size": older_size,
+        "older_snapshot_id": older.snapshot_id(), "current_snapshot_id": current.snapshot_id(),
+        "current_schema_id": metadata.current_schema().schema_id(),
+        "current_projected_field_ids": metadata.current_schema().as_struct().fields().iter().map(|field| field.id).collect::<Vec<_>>(),
+        "current_paths": current_tasks.iter().map(|task| task.data_file_path()).collect::<Vec<_>>(),
+    });
+    metadata
+        .snapshots
+        .insert(older.snapshot_id(), Arc::new(older));
+    metadata
+        .snapshots
+        .insert(current.snapshot_id(), Arc::new(current));
+    fixture.table = fixture.table.clone().with_metadata(Arc::new(metadata));
+    witness
+}
+
 #[tokio::test]
 #[ignore = "exports shared fixtures for dev/scan-reports/run.sh"]
 async fn test_export_java_differential_fixtures() {
@@ -619,6 +702,29 @@ async fn test_export_java_differential_fixtures() {
             .runtime(test_runtime())
             .build()
             .unwrap();
+        let time_travel = if name == "time-travel" {
+            Some(prepare_older_snapshot(&mut fixture).await)
+        } else {
+            None
+        };
+        let requested_snapshot_id = time_travel
+            .as_ref()
+            .map(|witness| witness["older_snapshot_id"].as_i64().unwrap());
+        let delete_files: Vec<_> = if matches!(
+            name,
+            "writer-equality-pruning" | "writer-equality-association"
+        ) {
+            [10, 99]
+                .into_iter()
+                .map(|value| {
+                    let path = format!("{}/eq-{value}.parquet", fixture.table_location);
+                    json!({"size": fs::metadata(&path).unwrap().len(), "path": path,
+                    "content": 2, "content_offset": null, "content_size": null})
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let threshold = match name {
             "manifest-pruned" => Some(50),
             "file-pruned" => Some(200),
@@ -664,15 +770,8 @@ async fn test_export_java_differential_fixtures() {
             .scan()
             .with_concurrency_limit(1)
             .with_metrics_reporter(Arc::new(RecordingReporter(report_tx)));
-        if name == "time-travel" {
-            builder = builder.snapshot_id(
-                fixture
-                    .table
-                    .metadata()
-                    .current_snapshot()
-                    .unwrap()
-                    .snapshot_id(),
-            );
+        if let Some(snapshot_id) = requested_snapshot_id {
+            builder = builder.snapshot_id(snapshot_id);
         }
         if let Some(limit) = threshold {
             builder =
@@ -705,7 +804,18 @@ async fn test_export_java_differential_fixtures() {
                 RESERVED_COL_NAME_SPEC_ID,
             ]);
         }
-        let snapshot = fixture.table.metadata().current_snapshot().unwrap();
+        let snapshot = fixture
+            .table
+            .metadata()
+            .snapshot_by_id(requested_snapshot_id.unwrap_or_else(|| {
+                fixture
+                    .table
+                    .metadata()
+                    .current_snapshot()
+                    .unwrap()
+                    .snapshot_id()
+            }))
+            .unwrap();
         let expected_schema = if name == "time-travel" {
             snapshot.schema(fixture.table.metadata()).unwrap()
         } else {
@@ -827,7 +937,7 @@ async fn test_export_java_differential_fixtures() {
                 plan
             }).collect();
         let finalization_supported = consume.is_none() && planning_error.is_none();
-        cases.push(json!({"fixture": fixture_name, "cow_rewrite": cow, "metadata": metadata, "table_ident": fixture.table.identifier().to_string(), "threshold": threshold, "filter_column": filter_column, "consume": consume, "missing_manifest": missing_manifest, "planning_error": planning_error, "counts": counts, "settled_counts": settled_counts, "finalization_supported": finalization_supported, "plans": plans, "reports": reports, "expected_report": expected_report, "elapsed_ns": elapsed_ns}));
+        cases.push(json!({"fixture": fixture_name, "cow_rewrite": cow, "metadata": metadata, "table_ident": fixture.table.identifier().to_string(), "threshold": threshold, "filter_column": filter_column, "consume": consume, "missing_manifest": missing_manifest, "planning_error": planning_error, "counts": counts, "settled_counts": settled_counts, "finalization_supported": finalization_supported, "plans": plans, "reports": reports, "expected_report": expected_report, "elapsed_ns": elapsed_ns, "delete_files": delete_files, "requested_snapshot_id": requested_snapshot_id, "time_travel": time_travel}));
     }
     fs::write(
         output.join("rust.json"),

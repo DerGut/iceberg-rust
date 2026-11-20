@@ -60,20 +60,28 @@ def plans(items):
     ], key=lambda p: p["path"])
 
 
-def expected_planner_delta(name, rust, java):
-    if name not in PLANNER_FIELDS:
+def expected_planner_delta(name, rust, java, delete_files):
+    if name not in PLANNER_FIELDS or len(delete_files) != 2 or not java:
         return False
     if plans([dict(p, deletes=[]) for p in rust]) != plans([dict(p, deletes=[]) for p in java]):
         return False
+    root = Path(java[0]["path"]).parent
+    inventory = {delete["path"]: delete for delete in delete_files}
+    if set(inventory) != {str(root / "eq-10.parquet"), str(root / "eq-99.parquet")}:
+        return False
+    for plan in rust + java:
+        for delete in plan["deletes"]:
+            if delete != inventory.get(delete["path"]):
+                return False
     def attachments(items):
-        return {Path(p["path"]).name: sorted(Path(d["path"]).name for d in p["deletes"]) for p in items}
+        return sorted((p["path"], sorted(d["path"] for d in p["deletes"])) for p in items)
+    eq10, eq99 = str(root / "eq-10.parquet"), str(root / "eq-99.parquet")
+    data10, data50 = str(root / "written-10.parquet"), str(root / "written-50.parquet")
     if name == "writer-equality-pruning":
-        return (attachments(rust) == {"written-10.parquet": ["eq-10.parquet", "eq-99.parquet"]}
-                and attachments(java) == {"written-10.parquet": ["eq-10.parquet"]})
-    return (attachments(rust) == {
-        "written-10.parquet": ["eq-10.parquet", "eq-99.parquet"],
-        "written-50.parquet": ["eq-10.parquet", "eq-99.parquet"]}
-        and attachments(java) == {"written-10.parquet": ["eq-10.parquet"], "written-50.parquet": []})
+        return (attachments(rust) == [(data10, [eq10, eq99])]
+                and attachments(java) == [(data10, [eq10])])
+    return (attachments(rust) == [(data10, [eq10, eq99]), (data50, [eq10, eq99])]
+            and attachments(java) == [(data10, [eq10]), (data50, [])])
 
 
 def compare(root):
@@ -90,7 +98,7 @@ def compare(root):
         assert case["finalization_supported"] == (not lifecycle)
         counts, settled = case["counts"], case["settled_counts"]
         mismatches = []
-        known_plan = expected_planner_delta(name, case["plans"], other["plans"])
+        known_plan = expected_planner_delta(name, case["plans"], other["plans"], case.get("delete_files", []))
 
         def check(field, expected, actual, counter=None):
             if expected == actual:
@@ -184,6 +192,23 @@ def compare(root):
         report_results.append(dict(fixture=name, expected_report_count=0 if lifecycle else 1,
                                    actual_report_count=len(reports), contract_differences=report_differences))
 
+        if name == "time-travel":
+            witness = case["time_travel"]
+            check("time_travel.distinct_snapshot", True,
+                  case["requested_snapshot_id"] != witness["current_snapshot_id"])
+            check("time_travel.selected_snapshot", case["requested_snapshot_id"], case["expected_report"]["snapshot-id"])
+            check("time_travel.schema", 1, case["expected_report"]["schema-id"])
+            check("time_travel.current_schema", 2, witness["current_schema_id"])
+            check("time_travel.projection", list(range(1, 9)), case["expected_report"]["projected-field-ids"])
+            check("time_travel.current_projection", list(range(1, 9)) + [100], witness["current_projected_field_ids"])
+            check("time_travel.current_files", 2, len(witness["current_paths"]))
+            check("time_travel.disjoint_files", True, witness["older_path"] not in witness["current_paths"])
+            expected_counts = dict.fromkeys(METRICS, 0)
+            expected_counts.update(total_data_manifests=1, scanned_data_manifests=1,
+                                   result_data_files=1, total_file_size_in_bytes=witness["older_size"])
+            check("time_travel.counts", expected_counts, counts)
+            check("time_travel.paths", [witness["older_path"]], [p["path"] for p in case["plans"]])
+
         check("counter_fields", sorted(METRICS), sorted(counts))
         check("settled_counter_fields", sorted(METRICS), sorted(settled))
         jmetrics = other["report"]["metrics"]
@@ -234,6 +259,9 @@ def compare(root):
                 if name == "writer-equality-pruning":
                     check("skipped_delete_files.known_rust", 0, counts.get("skipped_delete_files"))
                     check("skipped_delete_files.known_java", 1, jmetrics["skipped-delete-files"]["value"])
+        report_results[-1]["passed"] = not any(
+            m["metric"] == "report_count" or m["metric"].startswith(("report.", "time_travel."))
+            for m in mismatches)
         categories = sorted({m["category"] for m in mismatches})
         status = ("unexpected-difference" if "unexpected" in categories else
                   "deferred-lifecycle" if lifecycle else
@@ -263,9 +291,12 @@ def compare(root):
     observed_equal = sum(r["comparison"] == "equal" for r in results)
     complete_equal = sum(r["comparison"] == "equal" for r in complete_results)
     lifecycle_equal = sum(r["comparison"] == "equal" for r in lifecycle_results)
+    difference_kind = "explained" if not groups["unexpected-difference"] else "observed"
     lines = [
-        "# Executed Java comparison", "", summary["scope"], "",
-        f"**Observed counter/plan agreement: {observed_equal}/{len(results)} cases.**", "",
+        "# Completed scan-report validation", "", summary["scope"], "",
+        f"**Completed-report checks: {sum(r['passed'] for r in report_results if r['expected_report_count'] == 1)}/{len(complete_results)}.**",
+        f"**Suppression checks: {sum(r['passed'] for r in report_results if r['expected_report_count'] == 0)}/{len(lifecycle_results)}.**", "",
+        f"Counter/plan agreement: **{observed_equal}/{len(results)} cases**, with {len(results) - observed_equal} {difference_kind} differences.", "",
         f"- Fully consumed scans: **{complete_equal}/{len(complete_results)} match**.",
         f"- Lifecycle observations: **{lifecycle_equal}/{len(lifecycle_results)} match**; production finalization remains deferred.",
         f"- **{len(results) - observed_equal} cases differ**; each difference is explained below.", "",
@@ -290,8 +321,13 @@ def compare(root):
               "33 completed scans must emit exactly one report; six early-drop/error scans must emit none.",
               "All callback counters must equal the completed private-counter capture. Identity, schema, filter, projection, metadata and duration bounds are checked.",
               "Java projection/schema, filter sanitization, metadata and partial-report differences are checked against explicit expectations and retained below.", ""]
+    explanations = {}
     for result in report_results:
-        lines.append(f"- `{result['fixture']}`: {result['actual_report_count']}/{result['expected_report_count']} reports; " + " ".join(result["contract_differences"]))
+        for explanation in result["contract_differences"]:
+            explanations.setdefault(explanation, []).append(result["fixture"])
+    for explanation, fixtures in explanations.items():
+        affected = "All completed cases" if len(fixtures) == len(complete_results) else ", ".join(f"`{name}`" for name in fixtures)
+        lines.append(f"- {explanation} Cases: {affected}.")
     lines += ["", "Lifecycle counter equality is observational, not a production finalization guarantee.", ""]
     (root / "RESULTS.md").write_text("\n".join(lines))
     print(json.dumps({k: len(v) for k, v in groups.items()}, indent=2))

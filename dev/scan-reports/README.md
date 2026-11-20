@@ -5,6 +5,9 @@ PR #3736 at `dcf9dfb44baf20a9bdc3ff9e1c26cd7d89444181`.
 It exercises actual `MetricsReporter` callbacks as well as the inherited
 private-counter and exact file/delete-plan comparison.
 
+**33/33 completed-report checks and 6/6 suppression checks pass.** Counter/plan
+comparison matches in **35/39 cases**, with four explained differences.
+
 The shared-file matrix has **33 fully consumed scans**, each required to emit
 exactly one report, and **six early-drop/error scans**, each required to emit
 none. Both normal and COW planning are covered. Callback values are captured
@@ -42,7 +45,11 @@ The inherited counter/plan result is **35/39 observed matches**: 31/33 complete
 scans and 4/6 lifecycle observations. The two complete differences are existing
 Java equality-delete bounds pruning/association differences. Two early-close
 counter differences are concurrent read-ahead. These remain visible and are
-accepted only with their expected plan shapes and counter invariants.
+accepted only with their expected attachment additions/removals and counter
+invariants. Every delete attachment is checked against an independent inventory
+of full paths, physical sizes, equality content type and absent DV coordinates,
+including deletes present only in Rust's plan. The inventory uses the fixture's
+known delete files and filesystem sizes, not captured task properties.
 
 Full report parity is not claimed. Explicit expectations retain these contract
 differences:
@@ -57,17 +64,27 @@ differences:
 - Rust omits reports for early drop and observed planning errors; Java reports
   on close.
 
-The **63 negative controls** corrupt every private counter and every callback
+The time-travel case selects an older snapshot with one distinct file and
+schema 1, while the current snapshot contains two other files and schema 2.
+It checks the older snapshot ID, schema, projection, exact path and all 16
+counters against explicit expectations, retaining current-snapshot evidence
+alongside the selected-snapshot capture.
+
+The **108 negative controls** corrupt every private counter and every callback
 counter, identity/schema/filter/metadata fields, duration bounds, projection
 IDs/names and list lengths, report cardinality, plans and fixture membership.
 They also corrupt Java fields inside the explained projection/filter cases, so
-those explanations cannot conceal arbitrary differences.
+those explanations cannot conceal arbitrary differences. Each attached delete's
+path, content type, size, content offset and content size is corrupted in turn
+on both runtimes in both explained equality-delete cases. Controls also replace
+time-travel report fields and counters with current-snapshot values. The
+uncorrupted baseline must pass before corruption controls run.
 
 ## Public API integration
 
 `crates/integration_tests/tests/completed_scan_reports.rs` creates its own
 namespaces and real Parquet files using the REST catalog and S3-compatible
-object store. Three tests cover:
+object store. Five tests cover:
 
 - Identical rows with reporting disabled/enabled, selective Arrow reads,
   inherited and overridden reporters, concurrent reuse of a scan, and a
@@ -79,6 +96,12 @@ object store. Three tests cover:
   reads usable.
 - No reports for snapshotless tables, manifest stream errors, or manifest-list
   setup errors.
+- Exactly one operation-scoped report when two operations share a scan and one
+  is completed while the other is dropped after its first task.
+- A completed planning report surviving a later Arrow read failure: the test
+  consumes planning through EOF, deletes a planned Parquet file, and hands the
+  captured tasks to the public Arrow reader. It checks the missing-file error
+  and the original planning report.
 
 Positive delivery waits and negative channel-closure checks have timeouts.
 A report describes planning, not row-read success: Arrow can finish planning

@@ -54,8 +54,8 @@ class TestRustScanReports {
             fixture.get("table_ident").asText(),
             report -> reports.add((ScanReport) report));
         TableScan scan = table.newScan();
-        if (name.equals("time-travel")) {
-          scan = scan.useSnapshot(table.currentSnapshot().snapshotId());
+        if (!fixture.path("requested_snapshot_id").isNull()) {
+          scan = scan.useSnapshot(fixture.get("requested_snapshot_id").asLong());
         }
         if (!fixture.get("threshold").isNull()) {
           scan = scan.filter(Expressions.lessThan(fixture.get("filter_column").asText(), fixture.get("threshold").asLong()));
@@ -81,7 +81,8 @@ class TestRustScanReports {
         ArrayNode plans = result.putArray("plans");
         try (CloseableIterable<? extends ScanTask> tasks = cow
                  ? table.newBatchScan()
-                     .useSnapshot(table.currentSnapshot().snapshotId())
+                     .useSnapshot(fixture.path("requested_snapshot_id").isNull()
+                         ? table.currentSnapshot().snapshotId() : fixture.get("requested_snapshot_id").asLong())
                      .caseSensitive(scan.isCaseSensitive())
                      .filter(scan.filter())
                      .project(scan.schema())
