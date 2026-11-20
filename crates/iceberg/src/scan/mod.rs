@@ -24,12 +24,14 @@ use context::*;
 mod metrics;
 #[cfg(test)]
 mod metrics_java;
+mod report;
 mod task;
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::time::Instant;
 
 use arrow_array::RecordBatch;
 use futures::channel::mpsc::{Sender, channel};
@@ -47,12 +49,13 @@ use crate::io::FileIO;
 use crate::metadata_columns::{
     RESERVED_FIELD_ID_PARTITION, get_metadata_field_id, is_metadata_column_name,
 };
+use crate::metrics::MetricsReporter;
 use crate::runtime::Runtime;
 use crate::spec::{DataContentType, Schema, SchemaRef, SnapshotRef, SortOrderRef, StructType};
 use crate::table::Table;
 use crate::util::available_parallelism;
 use crate::util::snapshot::snapshot_id_as_of_time;
-use crate::{Error, ErrorKind, Result};
+use crate::{Error, ErrorKind, Result, TableIdent};
 
 /// A stream of arrow [`RecordBatch`]es.
 pub type ArrowRecordBatchStream = BoxStream<'static, Result<RecordBatch>>;
@@ -180,6 +183,7 @@ enum SnapshotSelection {
 /// Builder to create table scan.
 pub struct TableScanBuilder<'a> {
     table: &'a Table,
+    metrics_reporter: Option<Arc<dyn MetricsReporter>>,
     // Defaults to none which means select all columns
     column_names: Option<Vec<String>>,
     column_stats_names: Option<Vec<String>>,
@@ -196,6 +200,7 @@ impl<'a> TableScanBuilder<'a> {
 
         Self {
             table,
+            metrics_reporter: table.metrics_reporter(),
             column_names: None,
             column_stats_names: None,
             snapshot_selection: None,
@@ -204,6 +209,12 @@ impl<'a> TableScanBuilder<'a> {
             concurrency_limit_manifest_entries: num_cpus,
             concurrency_limit_manifest_files: num_cpus,
         }
+    }
+
+    /// Overrides the table's metrics reporter for this scan.
+    pub fn with_metrics_reporter(mut self, reporter: Arc<dyn MetricsReporter>) -> Self {
+        self.metrics_reporter = Some(reporter);
+        self
     }
 
     /// Sets the scan's case sensitivity
@@ -359,6 +370,8 @@ impl<'a> TableScanBuilder<'a> {
             None => {
                 let Some(current_snapshot_id) = self.table.metadata().current_snapshot() else {
                     return Ok(TableScan {
+                        table_ident: self.table.identifier().clone(),
+                        metrics_reporter: self.metrics_reporter,
                         column_names: self.column_names,
                         file_io: self.table.file_io().clone(),
                         plan_context: None,
@@ -424,6 +437,8 @@ impl<'a> TableScanBuilder<'a> {
         };
 
         Ok(TableScan {
+            table_ident: self.table.identifier().clone(),
+            metrics_reporter: self.metrics_reporter,
             column_names: self.column_names,
             file_io: self.table.file_io().clone(),
             plan_context: Some(plan_context),
@@ -437,6 +452,8 @@ impl<'a> TableScanBuilder<'a> {
 /// Table scan.
 #[derive(Debug)]
 pub struct TableScan {
+    table_ident: TableIdent,
+    metrics_reporter: Option<Arc<dyn MetricsReporter>>,
     /// A [PlanContext], if this table has at least one snapshot, otherwise None.
     ///
     /// If this is None, then the scan contains no rows.
@@ -482,6 +499,7 @@ impl TableScan {
             return Ok(Box::pin(futures::stream::empty()));
         };
 
+        let started = Instant::now();
         let concurrency_limit_manifest_files = self.concurrency_limit_manifest_files;
         let concurrency_limit_manifest_entries = self.concurrency_limit_manifest_entries;
 
@@ -596,7 +614,19 @@ impl TableScan {
             });
         }
 
-        Ok(planned_file_rx.boxed())
+        let tasks = planned_file_rx.boxed();
+        Ok(match &self.metrics_reporter {
+            Some(reporter) => report::report_on_completion(
+                tasks,
+                metrics,
+                self.table_ident.clone(),
+                plan_context,
+                reporter.clone(),
+                self.runtime.clone(),
+                started,
+            ),
+            None => tasks,
+        })
     }
 
     /// Returns an [`ArrowRecordBatchStream`] using the supplied reader settings.
@@ -820,7 +850,7 @@ mod tests {
     };
     use crate::test_utils::test_runtime;
     use crate::util::snapshot::snapshot_id_as_of_time;
-    use crate::{ErrorKind, Runtime, TableIdent};
+    use crate::{ErrorKind, Result, Runtime, TableIdent};
 
     #[tokio::test]
     async fn test_table_scan_columns() {
@@ -3651,6 +3681,94 @@ mod tests {
 
         // Assert it finished (didn't timeout)
         assert!(result.is_ok(), "Scan timed out - deadlock detected");
+    }
+
+    /// Plans `table` under a timeout so a swallowed manifest error shows up as
+    /// a timeout instead of a hang, and returns the collected result.
+    async fn plan_files_with_timeout(table: &Table) -> Result<Vec<FileScanTask>> {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            table
+                .scan()
+                .build()
+                .unwrap()
+                .plan_files()
+                .await
+                .unwrap()
+                .try_collect::<Vec<_>>()
+                .await
+        })
+        .await
+        .expect("plan_files hung instead of reporting the manifest error")
+    }
+
+    /// Returns the path of the first manifest in the current snapshot.
+    async fn first_manifest_path(fixture: &TableTestFixture) -> String {
+        let snapshot = fixture.table.metadata().current_snapshot().unwrap();
+        let manifest_list = fixture
+            .table
+            .manifest_list_reader(snapshot)
+            .load()
+            .await
+            .unwrap();
+        manifest_list.entries()[0].manifest_path.clone()
+    }
+
+    #[tokio::test]
+    async fn test_plan_files_reports_corrupt_manifest_as_error() {
+        let mut fixture = TableTestFixture::new();
+        fixture.setup_manifest_files().await;
+        let path = first_manifest_path(&fixture).await;
+        fs::write(&path, b"not an avro file").unwrap();
+
+        let err = plan_files_with_timeout(&fixture.table)
+            .await
+            .expect_err("a corrupt manifest must fail the plan");
+        assert_eq!(err.kind(), ErrorKind::Unexpected);
+        assert!(err.to_string().contains(&path), "{err}");
+    }
+
+    #[tokio::test]
+    async fn test_plan_files_reports_missing_manifest_as_error() {
+        let mut fixture = TableTestFixture::new();
+        fixture.setup_manifest_files().await;
+        let path = first_manifest_path(&fixture).await;
+        fs::remove_file(&path).unwrap();
+
+        let err = plan_files_with_timeout(&fixture.table)
+            .await
+            .expect_err("a missing manifest must fail the plan");
+        assert_eq!(err.kind(), ErrorKind::Unexpected);
+        assert!(err.to_string().contains(&path), "{err}");
+    }
+
+    /// A manifest parse spawned on a shut-down cpu runtime is cancelled, which
+    /// takes the same `JoinError` path a panicking parse does. The manifest path
+    /// in the error comes from `ObjectCache`'s "Failed to load manifest" wrapper;
+    /// `test_read_names_manifest_when_parse_is_cancelled` covers the reader's own
+    /// context.
+    #[tokio::test]
+    async fn test_plan_files_reports_cancelled_manifest_parse_as_error() {
+        let mut fixture = TableTestFixture::new();
+        fixture.setup_manifest_files().await;
+        let path = first_manifest_path(&fixture).await;
+        let io_rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let cpu_rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let rt = Runtime::new_with_split(&io_rt, &cpu_rt);
+        cpu_rt.shutdown_background();
+        let table = fixture.table.clone().with_runtime(rt);
+
+        let err = plan_files_with_timeout(&table)
+            .await
+            .expect_err("a cancelled manifest parse must fail the plan");
+        assert_eq!(err.kind(), ErrorKind::Unexpected);
+        assert!(err.to_string().contains(&path), "{err}");
+        io_rt.shutdown_background();
     }
 
     #[tokio::test]
