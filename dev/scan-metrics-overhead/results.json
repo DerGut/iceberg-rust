@@ -1,0 +1,209 @@
+{
+  "recorded_date": "2026-11-20",
+  "architecture": "arm64",
+  "compiler": "rustc 1.97.0-nightly (e8e4541ff 2026-04-15)",
+  "build_flags": [
+    "--edition=2024",
+    "-C",
+    "opt-level=3",
+    "-C",
+    "target-cpu=native"
+  ],
+  "total_files_per_sample": 2000000,
+  "warmup_rounds": 1,
+  "measured_rounds": 7,
+  "results": [
+    {
+      "workers": 1,
+      "deletes": false,
+      "mode": "Baseline",
+      "median_ns_per_file": 0.27,
+      "min_ns_per_file": 0.264,
+      "max_ns_per_file": 0.311
+    },
+    {
+      "workers": 1,
+      "deletes": false,
+      "mode": "Disabled",
+      "median_ns_per_file": 0.316,
+      "min_ns_per_file": 0.311,
+      "max_ns_per_file": 0.331
+    },
+    {
+      "workers": 1,
+      "deletes": false,
+      "mode": "CountersOnly",
+      "median_ns_per_file": 1.821,
+      "min_ns_per_file": 1.788,
+      "max_ns_per_file": 1.852
+    },
+    {
+      "workers": 1,
+      "deletes": false,
+      "mode": "Current",
+      "median_ns_per_file": 3.619,
+      "min_ns_per_file": 3.578,
+      "max_ns_per_file": 3.711
+    },
+    {
+      "workers": 1,
+      "deletes": true,
+      "mode": "Baseline",
+      "median_ns_per_file": 0.307,
+      "min_ns_per_file": 0.268,
+      "max_ns_per_file": 0.316
+    },
+    {
+      "workers": 1,
+      "deletes": true,
+      "mode": "Disabled",
+      "median_ns_per_file": 0.315,
+      "min_ns_per_file": 0.313,
+      "max_ns_per_file": 0.323
+    },
+    {
+      "workers": 1,
+      "deletes": true,
+      "mode": "CountersOnly",
+      "median_ns_per_file": 2.815,
+      "min_ns_per_file": 2.79,
+      "max_ns_per_file": 2.838
+    },
+    {
+      "workers": 1,
+      "deletes": true,
+      "mode": "Current",
+      "median_ns_per_file": 4.32,
+      "min_ns_per_file": 4.017,
+      "max_ns_per_file": 4.563
+    },
+    {
+      "workers": 4,
+      "deletes": false,
+      "mode": "Baseline",
+      "median_ns_per_file": 0.09,
+      "min_ns_per_file": 0.079,
+      "max_ns_per_file": 0.108
+    },
+    {
+      "workers": 4,
+      "deletes": false,
+      "mode": "Disabled",
+      "median_ns_per_file": 0.099,
+      "min_ns_per_file": 0.094,
+      "max_ns_per_file": 0.139
+    },
+    {
+      "workers": 4,
+      "deletes": false,
+      "mode": "CountersOnly",
+      "median_ns_per_file": 15.613,
+      "min_ns_per_file": 13.533,
+      "max_ns_per_file": 16.275
+    },
+    {
+      "workers": 4,
+      "deletes": false,
+      "mode": "Current",
+      "median_ns_per_file": 70.611,
+      "min_ns_per_file": 60.092,
+      "max_ns_per_file": 73.453
+    },
+    {
+      "workers": 4,
+      "deletes": true,
+      "mode": "Baseline",
+      "median_ns_per_file": 0.1,
+      "min_ns_per_file": 0.079,
+      "max_ns_per_file": 0.139
+    },
+    {
+      "workers": 4,
+      "deletes": true,
+      "mode": "Disabled",
+      "median_ns_per_file": 0.108,
+      "min_ns_per_file": 0.093,
+      "max_ns_per_file": 0.206
+    },
+    {
+      "workers": 4,
+      "deletes": true,
+      "mode": "CountersOnly",
+      "median_ns_per_file": 30.56,
+      "min_ns_per_file": 25.347,
+      "max_ns_per_file": 35.415
+    },
+    {
+      "workers": 4,
+      "deletes": true,
+      "mode": "Current",
+      "median_ns_per_file": 81.926,
+      "min_ns_per_file": 37.801,
+      "max_ns_per_file": 86.463
+    },
+    {
+      "workers": 8,
+      "deletes": false,
+      "mode": "Baseline",
+      "median_ns_per_file": 0.125,
+      "min_ns_per_file": 0.082,
+      "max_ns_per_file": 0.309
+    },
+    {
+      "workers": 8,
+      "deletes": false,
+      "mode": "Disabled",
+      "median_ns_per_file": 0.116,
+      "min_ns_per_file": 0.082,
+      "max_ns_per_file": 0.283
+    },
+    {
+      "workers": 8,
+      "deletes": false,
+      "mode": "CountersOnly",
+      "median_ns_per_file": 44.19,
+      "min_ns_per_file": 21.564,
+      "max_ns_per_file": 49.076
+    },
+    {
+      "workers": 8,
+      "deletes": false,
+      "mode": "Current",
+      "median_ns_per_file": 111.017,
+      "min_ns_per_file": 65.032,
+      "max_ns_per_file": 131.021
+    },
+    {
+      "workers": 8,
+      "deletes": true,
+      "mode": "Baseline",
+      "median_ns_per_file": 0.096,
+      "min_ns_per_file": 0.083,
+      "max_ns_per_file": 0.103
+    },
+    {
+      "workers": 8,
+      "deletes": true,
+      "mode": "Disabled",
+      "median_ns_per_file": 0.1,
+      "min_ns_per_file": 0.064,
+      "max_ns_per_file": 0.125
+    },
+    {
+      "workers": 8,
+      "deletes": true,
+      "mode": "CountersOnly",
+      "median_ns_per_file": 88.0,
+      "min_ns_per_file": 61.301,
+      "max_ns_per_file": 89.633
+    },
+    {
+      "workers": 8,
+      "deletes": true,
+      "mode": "Current",
+      "median_ns_per_file": 171.083,
+      "min_ns_per_file": 160.944,
+      "max_ns_per_file": 197.32
+    }
+  ]
+}
