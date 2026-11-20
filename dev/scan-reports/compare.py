@@ -82,6 +82,7 @@ def compare(root):
     assert rust.keys() == java.keys(), "Rust/Java fixture sets differ"
     assert len(rust) == 39, "the complete inherited 39-case matrix is required"
     results = []
+    report_results = []
     for name, case in rust.items():
         other = java[name]
         assert "error" not in other, (name, "Java harness failure", other.get("error"))
@@ -118,6 +119,70 @@ def compare(root):
                 mismatch["checkpoint"] = "after-workers-stop" if counter else "consumer-stop"
                 mismatch["rust_after_workers_stop"] = settled.get(counter or field, "ABSENT")
             mismatches.append(mismatch)
+
+        reports = case.get("reports", [])
+        check("report_count", 0 if lifecycle else 1, len(reports))
+        report_differences = []
+        if not lifecycle and len(reports) == 1:
+            report = reports[0]
+            expected = case["expected_report"]
+            for field, value in expected.items():
+                check("report." + field, value, report.get(field, "ABSENT"))
+            check("report.metric_fields", sorted(METRICS), sorted(report.get("metrics", {})))
+            for metric in sorted(METRICS):
+                check("report." + metric, counts.get(metric, "ABSENT"),
+                      report.get("metrics", {}).get(metric, "ABSENT"))
+            check("report.duration_bounds", True,
+                  0 < report.get("duration-ns", -1) <= case["elapsed_ns"])
+            jreport = other["report"]
+            for field in ["table-name", "snapshot-id"]:
+                check("report.java." + field, jreport.get(field, "ABSENT"), report.get(field, "ABSENT"))
+            name_without_cow = name.removeprefix("cow-")
+            java_schema_zero = name_without_cow in {
+                "projection", "writer-empty-projection-filter", "nested-projection-filter", "metadata-projection"
+            }
+            check("report.java.schema-id", 0 if java_schema_zero else expected["schema-id"],
+                  jreport.get("schema-id", "ABSENT"))
+            if jreport.get("schema-id") != report.get("schema-id"):
+                report_differences.append("Java reports the projected schema ID (0); Rust reports the selected source schema ID.")
+            rust_ids, rust_names = report.get("projected-field-ids", []), report.get("projected-field-names", [])
+            java_ids, java_names = jreport.get("projected-field-ids", []), jreport.get("projected-field-names", [])
+            check("report.projection_lengths", len(rust_ids), len(rust_names))
+            check("report.java.projection_lengths", len(java_ids), len(java_names))
+            expected_java_pairs = list(zip(expected["projected-field-ids"], expected["projected-field-names"]))
+            if name_without_cow == "writer-projection-filter":
+                expected_java_pairs = [(1, "x"), (2, "y"), (3, "z")]
+            elif name_without_cow == "writer-empty-projection-filter":
+                expected_java_pairs = [(2, "y")]
+            elif name_without_cow.startswith("nested-"):
+                expected_java_pairs = [(1, "x"), (2, "y"), (3, "z"), (9, "details"), (10, "details.value"),
+                                       (12, "numbers.element"), (15, "records.element.value"),
+                                       (17, "lookup.key"), (18, "lookup.value"), (22, "objects.value.value")]
+                if name_without_cow == "nested-projection-filter":
+                    expected_java_pairs = [pair for pair in expected_java_pairs if pair[0] not in {1, 3}]
+            check("report.java.projection", sorted(expected_java_pairs), sorted(zip(java_ids, java_names)))
+            if sorted(zip(rust_ids, rust_names)) != sorted(zip(java_ids, java_names)):
+                report_differences.append("Java expands nested fields and includes filter-only fields; Rust lists requested source fields.")
+            raw_filter = True
+            sanitized_filter = True
+            if case["threshold"] is not None or name_without_cow == "all-pruned":
+                value = 200 if name_without_cow == "all-pruned" else case["threshold"]
+                raw_filter = {"type": "eq" if name_without_cow == "all-pruned" else "lt",
+                              "term": case["filter_column"], "value": value}
+                sanitized_filter = dict(raw_filter, value=f"({len(str(value))}-digit-int)")
+            check("report.java.raw_filter", raw_filter, other.get("raw_filter", "ABSENT"))
+            check("report.java.filter", sanitized_filter, jreport.get("filter", "ABSENT"))
+            report_differences.append("Java serializes sanitized filters; Rust exposes the original optional predicate.")
+            check("report.java.metadata_keys", ["iceberg-version"], sorted(jreport.get("metadata", {})))
+            check("report.java.version_present", True, bool(jreport.get("metadata", {}).get("iceberg-version")))
+            report_differences.append("Java includes iceberg-version metadata; Rust currently leaves metadata empty.")
+            timer = jreport.get("metrics", {}).get("total-planning-duration", {})
+            check("report.java.timer", (1, "nanoseconds", True),
+                  (timer.get("count"), timer.get("time-unit"), timer.get("total-duration", -1) > 0))
+        elif lifecycle:
+            report_differences.append("Rust emits no report for early drop or observed planning failure; Java reports on close.")
+        report_results.append(dict(fixture=name, expected_report_count=0 if lifecycle else 1,
+                                   actual_report_count=len(reports), contract_differences=report_differences))
 
         check("counter_fields", sorted(METRICS), sorted(counts))
         check("settled_counter_fields", sorted(METRICS), sorted(settled))
@@ -183,11 +248,11 @@ def compare(root):
               ["match", "planner-difference", "deferred-lifecycle", "unexpected-difference"]}
     summary = dict(
         results=results, groups=groups,
-        scope="16 planning counters plus exact file/delete plans; no reporter API is added.",
-        deferred=["planning duration", "production finalization after errors or early drop",
+        scope="Public callback payloads and lifecycle for 39 cases; 16 counters plus exact file/delete plans.",
+        reports=report_results,
+        deferred=["exact cross-runtime planning-duration comparison", "production finalization after errors or early drop",
                   "worker cancellation and worker-failure propagation"],
-        excluded=["report identity, projection, filter serialization and metadata: reporting is outside this branch",
-                  "row-reading, row-group and page metrics"],
+        excluded=["row-group and page metrics", "performance guarantees"],
         normalization="Plan/delete ordering only. Absolute paths and all sizes are compared before archival normalization.",
     )
     (root / "comparison.json").write_text(json.dumps(summary, indent=2) + "\n")
@@ -221,7 +286,13 @@ def compare(root):
                 if mismatch["metric"] != "plans":
                     lines.append(f"  - `{mismatch['metric']}`: Java `{mismatch['java']}`, Rust `{mismatch['rust']}` ({mismatch['category']}).")
         lines += [""]
-    lines += ["Lifecycle equality is observational, not a finalization guarantee. Differences at either checkpoint are retained in comparison.json.", ""]
+    lines += ["## Reporter validation", "",
+              "33 completed scans must emit exactly one report; six early-drop/error scans must emit none.",
+              "All callback counters must equal the completed private-counter capture. Identity, schema, filter, projection, metadata and duration bounds are checked.",
+              "Java projection/schema, filter sanitization, metadata and partial-report differences are checked against explicit expectations and retained below.", ""]
+    for result in report_results:
+        lines.append(f"- `{result['fixture']}`: {result['actual_report_count']}/{result['expected_report_count']} reports; " + " ".join(result["contract_differences"]))
+    lines += ["", "Lifecycle counter equality is observational, not a production finalization guarantee.", ""]
     (root / "RESULTS.md").write_text("\n".join(lines))
     print(json.dumps({k: len(v) for k, v in groups.items()}, indent=2))
     return 2 if groups["unexpected-difference"] else int(any(r["mismatches"] for r in results))

@@ -411,15 +411,6 @@
       ],
       "mismatches": [
         {
-          "metric": "result_data_files",
-          "java": 1,
-          "rust": 2,
-          "category": "scheduling",
-          "explanation": "Even after fixture producers stop, Rust counts concurrent buffered work that Java's lazy iterator did not visit. Exact partial-count parity is not promised.",
-          "checkpoint": "consumer-stop",
-          "rust_after_workers_stop": 2
-        },
-        {
           "metric": "result_data_files.after_workers_stop",
           "java": 1,
           "rust": 2,
@@ -427,15 +418,6 @@
           "explanation": "Even after fixture producers stop, Rust counts concurrent buffered work that Java's lazy iterator did not visit. Exact partial-count parity is not promised.",
           "checkpoint": "after-workers-stop",
           "rust_after_workers_stop": 2
-        },
-        {
-          "metric": "total_file_size_in_bytes",
-          "java": 2988,
-          "rust": 5976,
-          "category": "scheduling",
-          "explanation": "Even after fixture producers stop, Rust counts concurrent buffered work that Java's lazy iterator did not visit. Exact partial-count parity is not promised.",
-          "checkpoint": "consumer-stop",
-          "rust_after_workers_stop": 5976
         },
         {
           "metric": "total_file_size_in_bytes.after_workers_stop",
@@ -599,15 +581,374 @@
     ],
     "unexpected-difference": []
   },
-  "scope": "16 planning counters plus exact file/delete plans; no reporter API is added.",
+  "scope": "Public callback payloads and lifecycle for 39 cases; 16 counters plus exact file/delete plans.",
+  "reports": [
+    {
+      "fixture": "unfiltered",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "dead-only",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "manifest-pruned",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "file-pruned",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "all-pruned",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "projection",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java reports the projected schema ID (0); Rust reports the selected source schema ID.",
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "current-schema",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "time-travel",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "unmatched-delete",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "shared-position",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "path-position",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "equality",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "dv",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "dv-supersession",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "delete-manifest-pruned",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "writer-unfiltered",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "writer-file-pruned",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "writer-all-pruned",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "writer-equality-pruning",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "writer-equality-association",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "nested-all",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java expands nested fields and includes filter-only fields; Rust lists requested source fields.",
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "writer-projection-filter",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java expands nested fields and includes filter-only fields; Rust lists requested source fields.",
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "writer-empty-projection-filter",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java reports the projected schema ID (0); Rust reports the selected source schema ID.",
+        "Java expands nested fields and includes filter-only fields; Rust lists requested source fields.",
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "nested-projection-filter",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java reports the projected schema ID (0); Rust reports the selected source schema ID.",
+        "Java expands nested fields and includes filter-only fields; Rust lists requested source fields.",
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "nested-filter-only",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java expands nested fields and includes filter-only fields; Rust lists requested source fields.",
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "cow-writer-projection-filter",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java expands nested fields and includes filter-only fields; Rust lists requested source fields.",
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "cow-nested-projection-filter",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java reports the projected schema ID (0); Rust reports the selected source schema ID.",
+        "Java expands nested fields and includes filter-only fields; Rust lists requested source fields.",
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "metadata-projection",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java reports the projected schema ID (0); Rust reports the selected source schema ID.",
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "close-after-one",
+      "expected_report_count": 0,
+      "actual_report_count": 0,
+      "contract_differences": [
+        "Rust emits no report for early drop or observed planning failure; Java reports on close."
+      ]
+    },
+    {
+      "fixture": "close-after-last",
+      "expected_report_count": 0,
+      "actual_report_count": 0,
+      "contract_differences": [
+        "Rust emits no report for early drop or observed planning failure; Java reports on close."
+      ]
+    },
+    {
+      "fixture": "manifest-read-failure",
+      "expected_report_count": 0,
+      "actual_report_count": 0,
+      "contract_differences": [
+        "Rust emits no report for early drop or observed planning failure; Java reports on close."
+      ]
+    },
+    {
+      "fixture": "cow-writer-unfiltered",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "cow-writer-file-pruned",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "cow-writer-all-pruned",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "cow-shared-position",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "cow-dv",
+      "expected_report_count": 1,
+      "actual_report_count": 1,
+      "contract_differences": [
+        "Java serializes sanitized filters; Rust exposes the original optional predicate.",
+        "Java includes iceberg-version metadata; Rust currently leaves metadata empty."
+      ]
+    },
+    {
+      "fixture": "cow-close-after-one",
+      "expected_report_count": 0,
+      "actual_report_count": 0,
+      "contract_differences": [
+        "Rust emits no report for early drop or observed planning failure; Java reports on close."
+      ]
+    },
+    {
+      "fixture": "cow-close-after-last",
+      "expected_report_count": 0,
+      "actual_report_count": 0,
+      "contract_differences": [
+        "Rust emits no report for early drop or observed planning failure; Java reports on close."
+      ]
+    },
+    {
+      "fixture": "cow-manifest-read-failure",
+      "expected_report_count": 0,
+      "actual_report_count": 0,
+      "contract_differences": [
+        "Rust emits no report for early drop or observed planning failure; Java reports on close."
+      ]
+    }
+  ],
   "deferred": [
-    "planning duration",
+    "exact cross-runtime planning-duration comparison",
     "production finalization after errors or early drop",
     "worker cancellation and worker-failure propagation"
   ],
   "excluded": [
-    "report identity, projection, filter serialization and metadata: reporting is outside this branch",
-    "row-reading, row-group and page metrics"
+    "row-group and page metrics",
+    "performance guarantees"
   ],
   "normalization": "Plan/delete ordering only. Absolute paths and all sizes are compared before archival normalization."
 }

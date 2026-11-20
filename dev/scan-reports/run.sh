@@ -17,7 +17,7 @@ set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 repo=$(git rev-parse --show-toplevel)
 java_revision=4e61757dcf568051a13bb8d4c00ef57c9f248947
-production_revision=0678e0fce1816f524664301c5348569e5785d7e0
+production_revision=dcf9dfb44baf20a9bdc3ff9e1c26cd7d89444181
 work=${1:?Usage: bash dev/scan-reports/run.sh ABSOLUTE_OUTPUT_DIRECTORY}
 [[ "$work" = /* ]] || { echo "Output directory must be absolute" >&2; exit 2; }
 [[ ! -e "$work/rust-revision.txt" ]] || { echo "Use a fresh output directory" >&2; exit 2; }
@@ -57,6 +57,10 @@ PY
 run_check format cargo fmt --all -- --check
 run_check core-tests cargo test -p iceberg --lib --all-features
 run_check clippy cargo clippy -p iceberg --all-targets --all-features -- -D warnings
+if [[ "${SCAN_REPORT_RUN_REST:-0}" == "1" ]]; then
+  run_check rest-integration cargo test -p iceberg-integration-tests --test completed_scan_reports
+  run_check rest-clippy cargo clippy -p iceberg-integration-tests --test completed_scan_reports -- -D warnings
+fi
 run_check rust-capture cargo test -p iceberg --lib --no-default-features scan::metrics_java::test_export_java_differential_fixtures -- --ignored --exact
 cp "$repo/dev/scan-reports/TestRustScanReports.java" "$work/java/core/src/test/java/org/apache/iceberg/"
 pushd "$work/java" > /dev/null

@@ -72,4 +72,52 @@ for fixture, field, operation in controls:
             failed = next(r for r in comparison["results"] if r["fixture"] == fixture)
             assert failed["status"] == "unexpected-difference", failed
         print(f"Detected {fixture}: {field} {operation}")
-print(f"{len(controls)} negative controls passed")
+report_controls = [("rust", "unfiltered", ["reports", 0, "metrics", metric], "increment") for metric in sorted(METRICS)]
+report_controls += [
+    ("rust", "unfiltered", ["reports"], "clear"),
+    ("rust", "unfiltered", ["reports"], "duplicate"),
+    ("rust", "unfiltered", ["reports", 0, "table-name"], "replace"),
+    ("rust", "unfiltered", ["reports", 0, "snapshot-id"], "increment"),
+    ("rust", "unfiltered", ["reports", 0, "schema-id"], "increment"),
+    ("rust", "unfiltered", ["reports", 0, "filter"], "replace"),
+    ("rust", "unfiltered", ["reports", 0, "metadata"], "replace"),
+    ("rust", "unfiltered", ["reports", 0, "duration-ns"], "zero"),
+    ("rust", "unfiltered", ["reports", 0, "duration-ns"], "huge"),
+    ("rust", "unfiltered", ["reports", 0, "projected-field-ids"], "truncate"),
+    ("rust", "unfiltered", ["reports", 0, "projected-field-names"], "truncate"),
+    ("rust", "nested-projection-filter", ["reports", 0, "projected-field-ids", 0], "increment"),
+    ("rust", "close-after-last", ["reports"], "unexpected"),
+    ("java", "projection", ["report", "schema-id"], "increment"),
+    ("java", "nested-projection-filter", ["report", "projected-field-ids", 0], "increment"),
+    ("java", "nested-projection-filter", ["report", "projected-field-names"], "truncate"),
+    ("java", "writer-projection-filter", ["report", "filter", "value"], "replace"),
+    ("java", "writer-projection-filter", ["raw_filter", "value"], "increment"),
+    ("java", "unfiltered", ["report", "metadata"], "clear"),
+    ("java", "unfiltered", ["report", "metrics", "total-planning-duration", "time-unit"], "replace"),
+]
+for side, fixture, path, operation in report_controls:
+    captures = {"rust": copy.deepcopy(original), "java": json.loads(java)}
+    case = next(c for c in captures[side] if c["fixture"] == fixture)
+    parent = case
+    for key in path[:-1]:
+        parent = parent[key]
+    key = path[-1]
+    if operation == "increment": parent[key] += 1
+    elif operation == "replace": parent[key] = "corrupted"
+    elif operation == "clear": parent[key] = [] if isinstance(parent[key], list) else {}
+    elif operation == "duplicate": parent[key].append(copy.deepcopy(parent[key][0]))
+    elif operation == "truncate": parent[key].pop()
+    elif operation == "zero": parent[key] = 0
+    elif operation == "huge": parent[key] = case["elapsed_ns"] + 1
+    elif operation == "unexpected": parent[key] = [copy.deepcopy(original[0]["reports"][0])]
+    with tempfile.TemporaryDirectory() as temporary:
+        output = Path(temporary)
+        for target, cases in captures.items():
+            (output / f"{target}.json").write_text(json.dumps(cases))
+        result = subprocess.run([sys.executable, str(Path(__file__).with_name("compare.py")), str(output)], capture_output=True, text=True)
+        assert result.returncode == 2, (side, fixture, path, result.stdout, result.stderr)
+        comparison = json.loads((output / "comparison.json").read_text())
+        failed = next(r for r in comparison["results"] if r["fixture"] == fixture)
+        assert failed["status"] == "unexpected-difference", failed
+        print(f"Detected {side} {fixture}: {path} {operation}")
+print(f"{len(controls) + len(report_controls)} negative controls passed")

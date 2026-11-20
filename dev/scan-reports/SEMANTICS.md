@@ -1,8 +1,11 @@
-# Planning-counter scope
+# Completed report and planning-counter scope
 
-The production change instruments the existing planner. It adds no public API,
-reporter, timer, cancellation, worker joining, or additional pruning rules.
-Every invocation receives a fresh counter set, including COW planning.
+PR #3736 connects the planner's counters to opt-in asynchronous reports after
+clean stream EOF. Every invocation receives a fresh counter set, including COW
+planning. Reporter configuration is table-instance scoped and can be overridden
+per scan. It does not introduce cancellation, worker joining or pruning rules.
+Report cardinality, identity, projection, filters, metadata and duration bounds
+are now validated alongside the inherited counter comparison; see README.md.
 
 Java references below are pinned to
 [`4e61757dcf568051a13bb8d4c00ef57c9f248947`](https://github.com/apache/iceberg/tree/4e61757dcf568051a13bb8d4c00ef57c9f248947).
@@ -49,7 +52,9 @@ the existing channel lifecycle. This is not a new worker-completion API. Early
 consumer termination can leave detached workers updating counters, and individual
 atomic loads do not form a coherent in-progress transaction. The validation-only
 exporter records that checkpoint and a second observation after counter-producer
-ownership has been released. Neither is a production finalized report.
+ownership has been released. Neither checkpoint is a report for an incomplete operation. A separate callback
+capture must contain one report after clean EOF and none after early drop or an
+observed stream error. Callback counters must equal the completed capture.
 
 `writer-equality-association` retains another existing planner difference:
 [`DeleteFileIndex.canContainEqDeletesForFile`](https://github.com/apache/iceberg/blob/4e61757dcf568051a13bb8d4c00ef57c9f248947/core/src/main/java/org/apache/iceberg/DeleteFileIndex.java)
@@ -58,7 +63,9 @@ uses bounds in Java; Rust currently associates by partition/sequence. Partial
 second buffered task. A consumer-stop observation can still happen to match
 Java's one-task count. Both observations remain in the evidence.
 
-No numeric counter category is postponed. Planning duration, stable partial/error
-finalization, cancellation and general worker-failure propagation are deferred.
-Report payload and delivery fields, Arrow row-reading counters, and performance
-are outside this comparison's scope.
+No numeric counter category is postponed. Duration is checked through bounds
+and a controlled consumer pause, not exact cross-runtime equality. Partial/error
+reports, cancellation and general worker-failure propagation remain outside this
+production contract. Report payloads and delivery timing are checked here and
+in the public REST integration suite. Arrow row-reading counters and performance
+remain outside this comparison's scope.

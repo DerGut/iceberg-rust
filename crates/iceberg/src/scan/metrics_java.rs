@@ -29,6 +29,7 @@ use crate::expr::Reference;
 use crate::metadata_columns::{
     RESERVED_COL_NAME_FILE, RESERVED_COL_NAME_POS, RESERVED_COL_NAME_SPEC_ID,
 };
+use crate::metrics::{MetricsReport, MetricsReporter};
 use crate::spec::{
     DataContentType, Datum, Literal, ManifestEntry, ManifestListWriter, ManifestStatus,
     ManifestWriterBuilder, NestedField, PrimitiveType, Schema, Struct,
@@ -36,6 +37,47 @@ use crate::spec::{
 use crate::table::Table;
 use crate::test_utils::scan::TableTestFixture;
 use crate::test_utils::test_runtime;
+
+#[derive(Debug)]
+struct RecordingReporter(tokio::sync::mpsc::UnboundedSender<serde_json::Value>);
+
+#[async_trait::async_trait]
+impl MetricsReporter for RecordingReporter {
+    async fn report(&self, report: &MetricsReport) {
+        let MetricsReport::Scan(report) = report;
+        let metrics = report.metrics();
+        self.0
+            .send(json!({
+                "table-name": report.table_ident().to_string(),
+                "snapshot-id": report.snapshot_id(),
+                "schema-id": report.schema_id(),
+                "filter": report.filter().map(ToString::to_string),
+                "projected-field-ids": report.projected_field_ids(),
+                "projected-field-names": report.projected_field_names(),
+                "metadata": report.metadata(),
+                "duration-ns": metrics.total_planning_duration().as_nanos(),
+                "metrics": {
+                    "total_data_manifests": metrics.total_data_manifests(),
+                    "total_delete_manifests": metrics.total_delete_manifests(),
+                    "skipped_data_manifests": metrics.skipped_data_manifests(),
+                    "skipped_delete_manifests": metrics.skipped_delete_manifests(),
+                    "scanned_data_manifests": metrics.scanned_data_manifests(),
+                    "scanned_delete_manifests": metrics.scanned_delete_manifests(),
+                    "result_data_files": metrics.result_data_files(),
+                    "skipped_data_files": metrics.skipped_data_files(),
+                    "total_file_size_in_bytes": metrics.total_file_size_in_bytes(),
+                    "result_delete_files": metrics.result_delete_files(),
+                    "skipped_delete_files": metrics.skipped_delete_files(),
+                    "total_delete_file_size_in_bytes": metrics.total_delete_file_size_in_bytes(),
+                    "indexed_delete_files": metrics.indexed_delete_files(),
+                    "equality_delete_files": metrics.equality_delete_files(),
+                    "positional_delete_files": metrics.positional_delete_files(),
+                    "dvs": metrics.dvs(),
+                },
+            }))
+            .unwrap();
+    }
+}
 
 async fn add_position_delete(fixture: &TableTestFixture, referenced: &str, partition: i64) {
     use crate::spec::{
@@ -616,7 +658,12 @@ async fn test_export_java_differential_fixtures() {
             "close-after-last" => Some(2),
             _ => None,
         };
-        let mut builder = fixture.table.scan().with_concurrency_limit(1);
+        let (report_tx, mut report_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut builder = fixture
+            .table
+            .scan()
+            .with_concurrency_limit(1)
+            .with_metrics_reporter(Arc::new(RecordingReporter(report_tx)));
         if name == "time-travel" {
             builder = builder.snapshot_id(
                 fixture
@@ -658,7 +705,58 @@ async fn test_export_java_differential_fixtures() {
                 RESERVED_COL_NAME_SPEC_ID,
             ]);
         }
+        let snapshot = fixture.table.metadata().current_snapshot().unwrap();
+        let expected_schema = if name == "time-travel" {
+            snapshot.schema(fixture.table.metadata()).unwrap()
+        } else {
+            fixture.table.metadata().current_schema().clone()
+        };
+        let selected_names: Vec<String> = match name {
+            "projection" | "writer-projection-filter" => vec!["x".into(), "z".into()],
+            "writer-empty-projection-filter" => vec![],
+            "nested-projection-filter" => ["details", "numbers", "records", "lookup", "objects"]
+                .map(String::from)
+                .to_vec(),
+            "nested-filter-only" => ["x", "y", "z", "numbers", "records", "lookup", "objects"]
+                .map(String::from)
+                .to_vec(),
+            "metadata-projection" => [
+                "x",
+                RESERVED_COL_NAME_FILE,
+                RESERVED_COL_NAME_POS,
+                RESERVED_COL_NAME_SPEC_ID,
+            ]
+            .map(String::from)
+            .to_vec(),
+            _ => expected_schema
+                .as_struct()
+                .fields()
+                .iter()
+                .map(|field| field.name.clone())
+                .collect(),
+        };
+        let selected_ids: Vec<i32> = selected_names
+            .iter()
+            .map(|name| {
+                expected_schema
+                    .field_by_name(name)
+                    .map(|field| field.id)
+                    .unwrap_or_else(|| {
+                        crate::metadata_columns::get_metadata_field_id(name).unwrap()
+                    })
+            })
+            .collect();
+        let expected_report = json!({
+            "table-name": fixture.table.identifier().to_string(),
+            "snapshot-id": snapshot.snapshot_id(),
+            "schema-id": expected_schema.schema_id(),
+            "filter": if name == "all-pruned" { Some("x = 200".to_owned()) } else { threshold.map(|limit| format!("{filter_column} < {limit}")) },
+            "projected-field-names": selected_names,
+            "projected-field-ids": selected_ids,
+            "metadata": {},
+        });
         let scan = builder.build().unwrap();
+        let started = std::time::Instant::now();
         let counters = Arc::new(PlanningCounters::default());
         let mut stream = if cow {
             scan.plan_data_files(counters.clone(), |ctx| ctx.into_cow_rewrite_file())
@@ -701,6 +799,17 @@ async fn test_export_java_differential_fixtures() {
         if consume.is_none() && planning_error.is_none() {
             assert_eq!(counts, settled_counts);
         }
+        drop(scan);
+        let reports = tokio::time::timeout(Duration::from_secs(10), async {
+            let mut reports = Vec::new();
+            while let Some(report) = report_rx.recv().await {
+                reports.push(report);
+            }
+            reports
+        })
+        .await
+        .expect("reporters must release their senders");
+        let elapsed_ns = started.elapsed().as_nanos();
         let metadata = output.join(format!("{fixture_name}.metadata.json"));
         fs::write(
             &metadata,
@@ -718,7 +827,7 @@ async fn test_export_java_differential_fixtures() {
                 plan
             }).collect();
         let finalization_supported = consume.is_none() && planning_error.is_none();
-        cases.push(json!({"fixture": fixture_name, "cow_rewrite": cow, "metadata": metadata, "table_ident": fixture.table.identifier().to_string(), "threshold": threshold, "filter_column": filter_column, "consume": consume, "missing_manifest": missing_manifest, "planning_error": planning_error, "counts": counts, "settled_counts": settled_counts, "finalization_supported": finalization_supported, "plans": plans}));
+        cases.push(json!({"fixture": fixture_name, "cow_rewrite": cow, "metadata": metadata, "table_ident": fixture.table.identifier().to_string(), "threshold": threshold, "filter_column": filter_column, "consume": consume, "missing_manifest": missing_manifest, "planning_error": planning_error, "counts": counts, "settled_counts": settled_counts, "finalization_supported": finalization_supported, "plans": plans, "reports": reports, "expected_report": expected_report, "elapsed_ns": elapsed_ns}));
     }
     fs::write(
         output.join("rust.json"),

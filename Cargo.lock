@@ -3123,6 +3123,7 @@ version = "0.10.1"
 dependencies = [
  "arrow-array",
  "arrow-schema",
+ "async-trait",
  "futures",
  "iceberg",
  "iceberg-catalog-rest",
@@ -3130,6 +3131,7 @@ dependencies = [
  "iceberg_test_utils",
  "ordered-float 2.10.1",
  "parquet",
+ "serde_json",
  "tokio",
  "uuid",
 ]
