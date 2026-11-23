@@ -53,8 +53,7 @@ pub enum MetricsReport {
 
 /// Information and metrics collected while planning a table scan.
 ///
-/// Projection lists selected source fields and requested metadata columns without expanding
-/// nested types or adding fields referenced only by filters.
+/// Projection includes nested fields, filter-required fields and requested metadata columns.
 #[derive(Debug)]
 #[cfg_attr(test, derive(Clone, PartialEq))]
 pub struct ScanReport {
@@ -79,7 +78,7 @@ impl ScanReport {
         self.snapshot_id
     }
 
-    /// Returns the ID of the schema used for the scan.
+    /// Returns the source schema ID for an unchanged projection, or 0 otherwise.
     pub fn schema_id(&self) -> SchemaId {
         self.schema_id
     }
@@ -89,12 +88,12 @@ impl ScanReport {
         self.filter.as_ref()
     }
 
-    /// Returns the resolved names of the selected fields.
+    /// Returns names corresponding to the projected field IDs.
     pub fn projected_field_names(&self) -> &[String] {
         &self.projected_field_names
     }
 
-    /// Returns the IDs of the selected fields.
+    /// Returns projected field IDs, including nested and filter-required fields.
     pub fn projected_field_ids(&self) -> &[i32] {
         &self.projected_field_ids
     }

@@ -24,26 +24,30 @@ use tracing::instrument::WithSubscriber;
 
 use super::PlanContext;
 use super::metrics::PlanningCounters;
+use crate::Result;
+use crate::expr::BoundPredicate;
 use crate::metadata_columns::{
     RESERVED_COL_NAME_PARTITION, RESERVED_FIELD_ID_PARTITION, get_metadata_field,
 };
 use crate::metrics::{MetricsReport, MetricsReporter, ScanReport};
-use crate::spec::set_iceberg_version;
-use crate::{Result, Runtime, TableIdent};
+use crate::scan::TableScan;
+use crate::spec::{
+    DEFAULT_SCHEMA_ID, SchemaId, StructType, Type, prune_columns, set_iceberg_version,
+};
 
 pub(super) fn report_on_completion<T: Send + 'static>(
     tasks: BoxStream<'static, Result<T>>,
     counters: Arc<PlanningCounters>,
-    table_ident: TableIdent,
-    context: &PlanContext,
+    scan: &TableScan,
     reporter: Arc<dyn MetricsReporter>,
-    runtime: Runtime,
     started: Instant,
 ) -> BoxStream<'static, Result<T>> {
+    let context = scan.plan_context.as_ref().expect("snapshot-bearing scan");
+    let table_ident = scan.table_ident.clone();
+    let runtime = scan.runtime.clone();
     let snapshot_id = context.snapshot.snapshot_id();
-    let schema_id = context.snapshot_schema.schema_id();
+    let (schema_id, projected_field_ids) = projected_fields(context, scan.column_names.is_none());
     let filter = context.predicate.as_deref().cloned();
-    let projected_field_ids = context.field_ids.as_ref().clone();
     let projected_field_names = projected_field_ids
         .iter()
         .map(|id| {
@@ -110,6 +114,100 @@ pub(super) fn report_on_completion<T: Send + 'static>(
     .boxed()
 }
 
+fn projected_fields(context: &PlanContext, select_all: bool) -> (SchemaId, Vec<i32>) {
+    let schema = &context.snapshot_schema;
+    let projected = if select_all {
+        Type::Struct(schema.as_struct().clone())
+    } else {
+        let mut required = Vec::new();
+        for id in context.field_ids.iter() {
+            if let Some(field) = schema.field_by_id(*id) {
+                if !matches!(field.field_type.as_ref(), Type::List(_) | Type::Map(_)) {
+                    required.push(*id);
+                }
+                collect_projected_ids(&field.field_type, &mut required);
+            }
+        }
+        if let Some(predicate) = &context.snapshot_bound_predicate {
+            collect_filter_ids(predicate, &mut required);
+        }
+        if required.is_empty() {
+            Type::Struct(StructType::default())
+        } else {
+            prune_columns(schema, required.iter().copied(), false)
+                // Pruning individual variant collection elements is unsupported.
+                .or_else(|_| prune_columns(schema, required, true))
+                .expect("validated scan projection")
+        }
+    };
+    let mut ids = Vec::new();
+    collect_projected_ids(&projected, &mut ids);
+    ids.sort_unstable();
+    ids.dedup();
+    let mut schema_id = if matches!(&projected, Type::Struct(projected) if projected == schema.as_struct())
+    {
+        schema.schema_id()
+    } else {
+        DEFAULT_SCHEMA_ID
+    };
+    for id in context.field_ids.iter() {
+        if schema.field_by_id(*id).is_none() && !ids.contains(id) {
+            ids.push(*id);
+            schema_id = DEFAULT_SCHEMA_ID;
+        }
+    }
+    (schema_id, ids)
+}
+
+fn collect_filter_ids(predicate: &BoundPredicate, ids: &mut Vec<i32>) {
+    match predicate {
+        BoundPredicate::AlwaysTrue | BoundPredicate::AlwaysFalse => {}
+        BoundPredicate::And(expr) | BoundPredicate::Or(expr) => {
+            for input in expr.inputs() {
+                collect_filter_ids(input, ids);
+            }
+        }
+        BoundPredicate::Not(expr) => collect_filter_ids(expr.inputs()[0], ids),
+        BoundPredicate::Unary(expr) => ids.push(expr.term().field().id),
+        BoundPredicate::Binary(expr) => ids.push(expr.term().field().id),
+        BoundPredicate::Set(expr) => ids.push(expr.term().field().id),
+    }
+}
+
+// Java TypeUtil.getProjectedIds omits collection containers and non-leaf element IDs.
+fn collect_projected_ids(ty: &Type, ids: &mut Vec<i32>) {
+    match ty {
+        Type::Struct(struct_type) => {
+            for field in struct_type.fields() {
+                if !matches!(field.field_type.as_ref(), Type::List(_) | Type::Map(_)) {
+                    ids.push(field.id);
+                }
+                collect_projected_ids(&field.field_type, ids);
+            }
+        }
+        Type::List(list) => {
+            collect_projected_ids(&list.element_field.field_type, ids);
+            if matches!(
+                list.element_field.field_type.as_ref(),
+                Type::Primitive(_) | Type::Variant(_)
+            ) {
+                ids.push(list.element_field.id);
+            }
+        }
+        Type::Map(map) => {
+            collect_projected_ids(&map.key_field.field_type, ids);
+            collect_projected_ids(&map.value_field.field_type, ids);
+            if matches!(
+                map.value_field.field_type.as_ref(),
+                Type::Primitive(_) | Type::Variant(_)
+            ) {
+                ids.extend([map.key_field.id, map.value_field.id]);
+            }
+        }
+        Type::Primitive(_) | Type::Variant(_) => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -120,11 +218,15 @@ mod tests {
     use tracing_subscriber::layer::SubscriberExt;
 
     use super::*;
-    use crate::expr::Reference;
+    use crate::expr::{Predicate, Reference};
     use crate::metadata_columns::{RESERVED_COL_NAME_FILE, RESERVED_FIELD_ID_FILE};
     use crate::metrics::ScanMetrics;
     use crate::scan::{FileScanTask, FileScanTaskStream, TableScan};
-    use crate::spec::{Datum, ManifestListWriter};
+    use crate::spec::{
+        Datum, FormatVersion, ListType, ManifestListWriter, MapType, NestedField, PrimitiveType,
+        Schema, StructType, Type, VariantType,
+    };
+    use crate::table::Table;
     use crate::test_utils::scan::TableTestFixture;
 
     #[derive(Debug)]
@@ -171,6 +273,242 @@ mod tests {
         tasks
     }
 
+    #[test]
+    fn test_projection_schema_id_and_filter_fields() {
+        let fixture = TableTestFixture::new();
+        for (columns, filter, expected) in [
+            (None, Predicate::AlwaysTrue, (1, (1..=8).collect())),
+            (Some(vec![]), Predicate::AlwaysTrue, (0, vec![])),
+            (
+                Some(vec!["X", "Z", "X"]),
+                Reference::new("Y").less_than(Datum::long(20)),
+                (0, vec![1, 2, 3]),
+            ),
+            (
+                Some(vec!["BOOL", "I64", "I32", "DBL", "A", "Z", "Y", "X", "Y"]),
+                Predicate::AlwaysTrue,
+                (1, (1..=8).collect()),
+            ),
+            (
+                Some(vec!["X", "Z", "A", "DBL", "I32", "I64", "BOOL"]),
+                Reference::new("Y").less_than(Datum::long(20)),
+                (1, (1..=8).collect()),
+            ),
+            (
+                Some(vec![RESERVED_COL_NAME_FILE, RESERVED_COL_NAME_FILE]),
+                Predicate::AlwaysTrue,
+                (0, vec![RESERVED_FIELD_ID_FILE]),
+            ),
+        ] {
+            let mut builder = fixture
+                .table
+                .scan()
+                .with_case_sensitive(false)
+                .with_filter(filter);
+            if let Some(columns) = &columns {
+                builder = builder.select(columns.iter().copied());
+            }
+            let scan = builder.build().unwrap();
+            assert_eq!(
+                projected_fields(scan.plan_context.as_ref().unwrap(), columns.is_none()),
+                expected
+            );
+        }
+    }
+
+    fn nested_projection_table() -> Table {
+        let fixture = TableTestFixture::new();
+        let value_struct = |id| {
+            Type::Struct(StructType::new(vec![
+                NestedField::optional(id, "value", PrimitiveType::Long).into(),
+            ]))
+        };
+        let list = |id, ty| {
+            Type::List(ListType::new(
+                NestedField::optional(id, "element", ty).into(),
+            ))
+        };
+        let map = |id, ty| {
+            Type::Map(MapType::new(
+                NestedField::required(id, "key", PrimitiveType::String).into(),
+                NestedField::optional(id + 1, "value", ty).into(),
+            ))
+        };
+        let schema = Schema::builder()
+            .with_schema_id(1)
+            .with_fields(vec![
+                NestedField::required(1, "x", PrimitiveType::Long).into(),
+                NestedField::required(2, "y", PrimitiveType::Long).into(),
+                NestedField::optional(3, "z", PrimitiveType::Long).into(),
+                NestedField::optional(
+                    9,
+                    "details",
+                    Type::Struct(StructType::new(vec![
+                        NestedField::optional(10, "value", PrimitiveType::Long).into(),
+                        NestedField::optional(23, "other", PrimitiveType::Long).into(),
+                    ])),
+                )
+                .into(),
+                NestedField::optional(
+                    11,
+                    "numbers",
+                    list(12, Type::Primitive(PrimitiveType::Long)),
+                )
+                .into(),
+                NestedField::optional(13, "records", list(14, value_struct(15))).into(),
+                NestedField::optional(16, "lookup", map(17, Type::Primitive(PrimitiveType::Long)))
+                    .into(),
+                NestedField::optional(19, "objects", map(20, value_struct(22))).into(),
+                NestedField::optional(24, "empty", Type::Struct(StructType::default())).into(),
+                NestedField::optional(
+                    25,
+                    "empty_records",
+                    list(26, Type::Struct(StructType::default())),
+                )
+                .into(),
+                NestedField::optional(27, "variants", list(28, Type::Variant(VariantType))).into(),
+                NestedField::optional(29, "variant_lookup", map(30, Type::Variant(VariantType)))
+                    .into(),
+                NestedField::optional(
+                    32,
+                    "nested",
+                    list(33, list(34, Type::Primitive(PrimitiveType::Long))),
+                )
+                .into(),
+                NestedField::optional(35, "variant", Type::Variant(VariantType)).into(),
+            ])
+            .build()
+            .unwrap();
+        let mut metadata = fixture.table.metadata().clone();
+        metadata.schemas.insert(1, Arc::new(schema));
+        metadata.last_column_id = 35;
+        metadata.format_version = FormatVersion::V3;
+        fixture.table.with_metadata(Arc::new(metadata))
+    }
+
+    #[test]
+    fn test_projection_prunes_empty_collections_inside_selected_structs() {
+        let table = nested_projection_table();
+        let mut scan = table.scan().select(["details"]).build().unwrap();
+        let context = scan.plan_context.as_mut().unwrap();
+        context.snapshot_schema = Arc::new(
+            Schema::builder()
+                .with_schema_id(1)
+                .with_fields(vec![
+                    NestedField::optional(
+                        9,
+                        "details",
+                        Type::Struct(StructType::new(vec![
+                            NestedField::optional(10, "value", PrimitiveType::Long).into(),
+                            NestedField::optional(
+                                11,
+                                "empty_records",
+                                Type::List(ListType::new(
+                                    NestedField::optional(
+                                        12,
+                                        "element",
+                                        Type::Struct(StructType::default()),
+                                    )
+                                    .into(),
+                                )),
+                            )
+                            .into(),
+                        ])),
+                    )
+                    .into(),
+                ])
+                .build()
+                .unwrap(),
+        );
+        assert_eq!(projected_fields(context, false), (0, vec![9, 10]));
+        assert_eq!(projected_fields(context, true), (1, vec![9, 10]));
+    }
+
+    #[test]
+    fn test_projection_expands_collections_and_preserves_full_schema() {
+        let table = nested_projection_table();
+        for (columns, expected) in [
+            (
+                None,
+                (1, vec![
+                    1, 2, 3, 9, 10, 12, 15, 17, 18, 22, 23, 24, 28, 30, 31, 34, 35,
+                ]),
+            ),
+            (
+                Some(vec!["DETAILS", "NUMBERS", "RECORDS", "LOOKUP", "OBJECTS"]),
+                (0, vec![9, 10, 12, 15, 17, 18, 22, 23]),
+            ),
+            (
+                Some(vec!["VARIANTS", "VARIANT_LOOKUP", "NESTED", "VARIANT"]),
+                (0, vec![28, 30, 31, 34, 35]),
+            ),
+            (Some(vec!["EMPTY_RECORDS"]), (0, vec![])),
+            (Some(vec!["EMPTY"]), (0, vec![24])),
+        ] {
+            let mut builder = table.scan().with_case_sensitive(false);
+            if let Some(columns) = &columns {
+                builder = builder.select(columns.iter().copied());
+            }
+            let scan = builder.build().unwrap();
+            assert_eq!(
+                projected_fields(scan.plan_context.as_ref().unwrap(), columns.is_none()),
+                expected
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_report_projection_includes_nested_filter_ancestors_and_names() {
+        let table = nested_projection_table();
+        let snapshot = table.metadata().current_snapshot().unwrap();
+        let output = table
+            .file_io()
+            .new_output(snapshot.manifest_list())
+            .unwrap()
+            .writer()
+            .await
+            .unwrap();
+        ManifestListWriter::v2(
+            output,
+            snapshot.snapshot_id(),
+            snapshot.parent_snapshot_id(),
+            snapshot.sequence_number(),
+        )
+        .close()
+        .await
+        .unwrap();
+        let filter = Reference::new("details.value")
+            .less_than(Datum::long(20))
+            .or(Reference::new("z").is_null())
+            .and(Reference::new("y").is_in([Datum::long(10), Datum::long(20)]));
+        for cow in [false, true] {
+            let (reporter, mut reports) = recording_reporter();
+            let scan = table
+                .scan()
+                .select_empty()
+                .with_filter(filter.clone())
+                .with_metrics_reporter(reporter)
+                .build()
+                .unwrap();
+            assert!(consume(&scan, cow).await.is_empty());
+            let report = next_report(&mut reports).await.unwrap();
+            assert_eq!(
+                (
+                    report.schema_id,
+                    report.projected_field_ids,
+                    report.projected_field_names
+                ),
+                (
+                    0,
+                    vec![2, 3, 9, 10],
+                    ["y", "z", "details", "details.value"]
+                        .map(str::to_owned)
+                        .to_vec()
+                )
+            );
+        }
+    }
+
     #[tokio::test]
     async fn test_completed_reports_are_operation_scoped() {
         let mut fixture = TableTestFixture::new();
@@ -198,7 +536,7 @@ mod tests {
             let mut expected = ScanReport {
                 table_ident: table.identifier().clone(),
                 snapshot_id: scan.snapshot().unwrap().snapshot_id(),
-                schema_id: table.metadata().current_schema().schema_id(),
+                schema_id: DEFAULT_SCHEMA_ID,
                 filter: Some(filter.clone()),
                 projected_field_ids: vec![1, RESERVED_FIELD_ID_FILE, RESERVED_FIELD_ID_PARTITION],
                 projected_field_names: vec![
@@ -312,15 +650,7 @@ mod tests {
             Ok(2),
         ])
         .boxed();
-        let stream = report_on_completion(
-            tasks,
-            Arc::default(),
-            scan.table_ident.clone(),
-            scan.plan_context.as_ref().unwrap(),
-            reporter,
-            scan.runtime.clone(),
-            Instant::now(),
-        );
+        let stream = report_on_completion(tasks, Arc::default(), &scan, reporter, Instant::now());
         let actual: Vec<_> = stream
             .map(|result| result.map_err(|error| error.kind()))
             .collect()

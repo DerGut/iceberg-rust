@@ -630,15 +630,9 @@ impl TableScan {
 
         let tasks = planned_file_rx.boxed();
         Ok(match &self.metrics_reporter {
-            Some(reporter) => report::report_on_completion(
-                tasks,
-                metrics,
-                self.table_ident.clone(),
-                plan_context,
-                reporter.clone(),
-                self.runtime.clone(),
-                started,
-            ),
+            Some(reporter) => {
+                report::report_on_completion(tasks, metrics, self, reporter.clone(), started)
+            }
             None => tasks,
         })
     }
